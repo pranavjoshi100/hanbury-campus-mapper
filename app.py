@@ -234,9 +234,7 @@ HTML_TEMPLATE = '''
             align-items: center;
             justify-content: center;
         }
-        .modal-overlay.active {
-            display: flex;
-        }
+        .modal-overlay.active { display: flex; }
         .modal {
             background: white;
             border-radius: 10px;
@@ -647,6 +645,25 @@ HTML_TEMPLATE = '''
             font-weight: 600;
             margin-left: 5px;
         }
+        /* Non-blocking stop prompt panel */
+        .stop-prompt {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 1000;
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 10px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+            padding: 16px;
+            width: 320px;
+            display: none;
+        }
+        .stop-prompt.active { display: block; }
+        .stop-prompt h4 { margin: 0 0 8px 0; color: #333; font-size: 16px; }
+        .stop-prompt p { margin: 0; color: #666; font-size: 13px; }
+        .stop-prompt .actions { display: flex; gap: 8px; margin-top: 12px; }
+        .stop-prompt .btn-primary { padding: 12px 18px; font-size: 16px; }
         .star-rating {
             display: flex;
             gap: 5px;
@@ -730,13 +747,6 @@ HTML_TEMPLATE = '''
             <button id="clearBtn" class="btn btn-danger">Clear All</button>
             <button id="saveBtn" class="btn btn-primary">Save to Server</button>
             <button id="exportExcelBtn" class="btn btn-secondary">Download Excel</button>
-            <div style="margin-left: 10px;">
-                <label style="font-size: 12px; color: #666;">Mode:</label>
-                <select id="drawingMode" style="margin-left: 5px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
-                    <option value="detailed">Stopping Points (rate each point)</option>
-                    <option value="passing">Passing Points (no prompts)</option>
-                </select>
-            </div>
             <div id="modeIndicator" class="mode-indicator">Click "Start Drawing" to begin</div>
         </div>
         
@@ -745,10 +755,10 @@ HTML_TEMPLATE = '''
             <div class="sidebar">
                 <div class="instructions">
                     <strong>How to map your walk:</strong><br>
-                    1. Choose your mode: "Stopping Points" (rate each point) or "Passing Points" (no prompts)<br>
-                    2. Click "Start Drawing"<br>
-                    3. Click points on the map<br>
-                    4. In Stopping Points mode: rate and time each segment<br>
+                    1. Click "Start Drawing"<br>
+                    2. Click points on the map<br>
+                    3. For each point, choose if you stopped or just passed through<br>
+                    4. If you stopped: rate and time your experience<br>
                     5. Double-click or click "Finish Line" to complete<br>
                     6. Click "Save to Server"
                 </div>
@@ -776,6 +786,15 @@ HTML_TEMPLATE = '''
             </div>
         </div>
         
+        <div id="stopPrompt" class="stop-prompt">
+            <h4>Did you stop at the last point?</h4>
+            <p>You can keep clicking to continue mapping. Only answer if you stopped.</p>
+            <div class="actions">
+                <button id="yesStopBtn" class="btn btn-primary" style="flex:1;">Yes, I stopped</button>
+                <button id="noStopBtn" class="btn btn-secondary" style="flex:1;">No, continue</button>
+            </div>
+        </div>
+
         <div id="transportSelector" class="transport-selector">
             <h3>Tell us about this segment</h3>
             <div class="segment-info" id="segmentInfo"></div>
@@ -845,6 +864,7 @@ map.fitBounds(imageOverlay.getBounds());
         let currentPoints = [];
         let currentSegments = [];
         let pendingSegment = null;
+        let editableSegmentIndex = -1; // index of the last auto-added segment that can be edited as a stop
         let currentPolylines = [];
         let tempLine = null;
         let vectors = new Map();
@@ -868,7 +888,9 @@ map.fitBounds(imageOverlay.getBounds());
         const segmentMinutesInput = document.getElementById('segmentMinutes');
         const segmentSecondsInput = document.getElementById('segmentSeconds');
         const starRating = document.getElementById('starRating');
-        const drawingModeSelect = document.getElementById('drawingMode');
+        const stopPrompt = document.getElementById('stopPrompt');
+        const yesStopBtn = document.getElementById('yesStopBtn');
+        const noStopBtn = document.getElementById('noStopBtn');
         
         starRating.addEventListener('click', function(e) {
             if (e.target.classList.contains('star')) {
@@ -883,13 +905,31 @@ map.fitBounds(imageOverlay.getBounds());
             }
         });
         
-        drawingModeSelect.addEventListener('change', function() {
-            drawingMode = this.value;
+        yesStopBtn.addEventListener('click', function() {
+            stopPrompt.classList.remove('active');
+            // Convert the last passing segment into a stopping segment by opening the selector
+            if (editableSegmentIndex >= 0 && editableSegmentIndex < currentSegments.length) {
+                const seg = currentSegments[editableSegmentIndex];
+                const distance = calculateDistance(seg.start, seg.end);
+                segmentInfo.textContent = `Segment ${editableSegmentIndex + 1}: ${distance.toFixed(3)} km`;
+                transportSelector.classList.add('active');
+                currentTransportModeSelect.value = seg.transportMode || 'walking';
+                segmentMinutesInput.value = String(Math.floor((seg.durationSeconds || 0) / 60));
+                segmentSecondsInput.value = String((seg.durationSeconds || 0) % 60);
+                selectedRating = seg.experienceRating || 0;
+                document.querySelectorAll('.star').forEach((s, idx) => {
+                    if (idx < selectedRating) s.classList.add('active'); else s.classList.remove('active');
+                });
+                segmentMinutesInput.focus();
+            }
+        });
+        
+        noStopBtn.addEventListener('click', function() {
+            // Simply hide prompt; user keeps mapping
+            stopPrompt.classList.remove('active');
         });
         
         confirmSegmentBtn.addEventListener('click', function() {
-            if (!pendingSegment) return;
-            
             const transportMode = currentTransportModeSelect.value;
             const minutes = parseInt(segmentMinutesInput.value) || 0;
             const seconds = parseInt(segmentSecondsInput.value) || 0;
@@ -900,11 +940,12 @@ map.fitBounds(imageOverlay.getBounds());
                 return;
             }
             
-            pendingSegment.transportMode = transportMode;
-            pendingSegment.durationSeconds = totalSeconds;
-            pendingSegment.experienceRating = selectedRating;
-            currentSegments.push(pendingSegment);
-            pendingSegment = null;
+            // Apply edits to existing segment
+            if (editableSegmentIndex >= 0 && editableSegmentIndex < currentSegments.length) {
+                currentSegments[editableSegmentIndex].transportMode = transportMode;
+                currentSegments[editableSegmentIndex].durationSeconds = totalSeconds;
+                currentSegments[editableSegmentIndex].experienceRating = selectedRating;
+            }
             
             segmentMinutesInput.value = '0';
             segmentSecondsInput.value = '0';
@@ -1014,18 +1055,13 @@ map.fitBounds(imageOverlay.getBounds());
         }
         
         function updateUI() {
-            if (isDrawing) {
+        if (isDrawing) {
                 drawBtn.textContent = 'Drawing...';
                 drawBtn.classList.add('active');
                 finishBtn.disabled = currentSegments.length === 0;
                 cancelBtn.disabled = false;
                 
-                if (pendingSegment) {
-                    modeIndicator.textContent = `Waiting for rating and time...`;
-                } else {
-                    const modeText = drawingMode === 'detailed' ? 'Stopping Points' : 'Passing Points';
-                    modeIndicator.textContent = `${modeText} Mode - ${currentPoints.length} points, ${currentSegments.length} segments`;
-                }
+                modeIndicator.textContent = `Drawing - ${currentPoints.length} points, ${currentSegments.length} segments`;
                 
                 mapElement.classList.remove('normal-cursor');
             } else {
@@ -1108,7 +1144,6 @@ map.fitBounds(imageOverlay.getBounds());
             currentPoints = [];
             currentSegments = [];
             pendingSegment = null;
-            drawingMode = drawingModeSelect.value; // Update mode from selector
             currentTransportModeSelect.value = 'walking';
             updateUI();
         }
@@ -1270,6 +1305,9 @@ map.fitBounds(imageOverlay.getBounds());
                 tempLine = null;
             }
             
+            stopConfirmationModal.classList.remove('active');
+            transportSelector.classList.remove('active');
+            
             updateUI();
         }
         
@@ -1350,43 +1388,20 @@ map.fitBounds(imageOverlay.getBounds());
         map.on('click', function(e) {
             if (!isDrawing) return;
             
-            if (pendingSegment) {
-                alert('Please select a transportation mode and rating for the current segment before adding another point.');
-                return;
-            }
-            
             const latlng = e.latlng;
             
             if (currentPoints.length >= 1) {
-                if (drawingMode === 'detailed') {
-                    // Detailed mode: prompt for transportation, time, and rating
-                    pendingSegment = {
-                        start: currentPoints[currentPoints.length - 1],
-                        end: latlng,
-                        transportMode: null,
-                        experienceRating: 0
-                    };
-                    
-                    const distance = calculateDistance(pendingSegment.start, pendingSegment.end);
-                    segmentInfo.textContent = `Segment ${currentSegments.length + 1}: ${distance.toFixed(3)} km`;
-                    transportSelector.classList.add('active');
-                    currentTransportModeSelect.value = 'walking';
-                    segmentMinutesInput.value = '0';
-                    segmentSecondsInput.value = '0';
-                    selectedRating = 0;
-                    document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
-                    segmentMinutesInput.focus();
-                } else {
-                    // Passing mode: automatically create segment with default values
-                    const segment = {
-                        start: currentPoints[currentPoints.length - 1],
-                        end: latlng,
-                        transportMode: 'walking',
-                        durationSeconds: 0,
-                        experienceRating: 0
-                    };
-                    currentSegments.push(segment);
-                }
+                // Auto-create passing segment and make it editable if user chooses to stop
+                const segment = {
+                    start: currentPoints[currentPoints.length - 1],
+                    end: latlng,
+                    transportMode: 'walking',
+                    durationSeconds: 0,
+                    experienceRating: 0
+                };
+                currentSegments.push(segment);
+                editableSegmentIndex = currentSegments.length - 1;
+                stopPrompt.classList.add('active');
             }
             
             currentPoints.push(latlng);
@@ -1402,7 +1417,7 @@ map.fitBounds(imageOverlay.getBounds());
         });
         
         map.on('mousemove', function(e) {
-            if (!isDrawing || currentPoints.length === 0 || pendingSegment) return;
+            if (!isDrawing || currentPoints.length === 0) return;
             
             if (tempLine) {
                 map.removeLayer(tempLine);
