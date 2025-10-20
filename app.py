@@ -2,6 +2,7 @@ from flask import Flask, render_template_string, jsonify, request, send_file
 import json
 import csv
 import os
+import sqlite3
 from datetime import datetime
 import io
 
@@ -14,11 +15,117 @@ vectors_storage = {}
 CSV_FILE = 'vector_data.csv'
 EXCEL_FILE = 'vector_data.xlsx'
 
+# Note: On Render and similar platforms, files are ephemeral and may be lost on redeployment
+# For production, consider using a database (PostgreSQL, MongoDB) or cloud storage (S3, Google Cloud Storage)
+
+# Database file for better persistence
+DB_FILE = 'campus_data.db'
+
+def init_database():
+    """Initialize SQLite database for better data persistence."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # Create routes table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS routes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            route_id INTEGER NOT NULL,
+            segment_id INTEGER NOT NULL,
+            start_lat REAL NOT NULL,
+            start_lng REAL NOT NULL,
+            end_lat REAL NOT NULL,
+            end_lng REAL NOT NULL,
+            transport_mode TEXT NOT NULL,
+            distance_km REAL NOT NULL,
+            duration_seconds INTEGER NOT NULL,
+            duration_minutes REAL NOT NULL,
+            experience_rating INTEGER NOT NULL,
+            user_type TEXT NOT NULL,
+            grade_level TEXT,
+            department TEXT,
+            full_name TEXT
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def save_to_database(route_id, segments, user_data):
+    """Save route data to SQLite database."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        timestamp = datetime.now().isoformat()
+        
+        for idx, segment in enumerate(segments):
+            start_lat = segment['start']['lat']
+            start_lng = segment['start']['lng']
+            end_lat = segment['end']['lat']
+            end_lng = segment['end']['lng']
+            transport = segment['transportMode']
+            duration_seconds = segment.get('durationSeconds', 0)
+            duration_minutes = round(duration_seconds / 60, 2)
+            experience_rating = segment.get('experienceRating', 0)
+            
+            # Calculate distance
+            from math import radians, sin, cos, sqrt, atan2
+            R = 6371
+            lat1, lon1 = radians(start_lat), radians(start_lng)
+            lat2, lon2 = radians(end_lat), radians(end_lng)
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+            c = 2 * atan2(sqrt(a), sqrt(1-a))
+            distance = R * c
+            
+            cursor.execute('''
+                INSERT INTO routes (timestamp, route_id, segment_id, start_lat, start_lng, 
+                                  end_lat, end_lng, transport_mode, distance_km, duration_seconds, 
+                                  duration_minutes, experience_rating, user_type, grade_level, 
+                                  department, full_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (timestamp, route_id, idx+1, start_lat, start_lng, end_lat, end_lng,
+                  transport, distance, duration_seconds, duration_minutes, experience_rating,
+                  user_data.get('userType', ''), user_data.get('gradeLevel', ''),
+                  user_data.get('department', ''), user_data.get('fullName', '')))
+        
+        conn.commit()
+        conn.close()
+        print(f"Route {route_id} saved to database")
+        return True
+    except Exception as e:
+        print(f"Error saving to database: {e}")
+        return False
+
+# Initialize database on startup
+init_database()
+
 def initialize_csv():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Timestamp', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
+            writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
+    else:
+        # Check if header needs updating and fix it
+        with open(CSV_FILE, 'r', newline='') as f:
+            reader = csv.reader(f)
+            header = next(reader, [])
+            if 'Full_Name' not in header or 'Timestamp' in header:
+                # Backup current content
+                f.seek(0)
+                content = f.read()
+                
+                # Write new header and content
+                with open(CSV_FILE, 'w', newline='') as fd:
+                    writer = csv.writer(fd)
+                    writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
+                    # Rewrite existing data, but skip the old header
+                    lines = content.split('\n')
+                    if len(lines) > 1:
+                        fd.write('\n'.join(lines[1:]))
 
 initialize_csv()
 
@@ -26,7 +133,8 @@ def append_route_to_excel(timestamp_iso, route_id, segments, user_data):
     """Append a row to EXCEL_FILE with dynamic segment columns."""
     try:
         import pandas as pd
-    except Exception:
+    except ImportError:
+        print("Warning: pandas not available, Excel export disabled")
         return
 
     full_name = user_data.get('fullName', '')
@@ -77,8 +185,15 @@ def append_route_to_excel(timestamp_iso, route_id, segments, user_data):
     try:
         with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
             combined.to_excel(writer, index=False, sheet_name='Vectors')
-    except Exception:
-        pass
+        print(f"Excel file updated: {EXCEL_FILE}")
+    except Exception as e:
+        print(f"Error writing Excel file: {e}")
+        # Try to create a basic Excel file if it fails
+        try:
+            combined.to_excel(EXCEL_FILE, index=False, sheet_name='Vectors')
+            print(f"Excel file created with basic method: {EXCEL_FILE}")
+        except Exception as e2:
+            print(f"Failed to create Excel file: {e2}")
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1287,7 +1402,7 @@ def save_csv():
         segments = data['segments']
         user_data = data['userData']
         
-        timestamp = datetime.now().isoformat()
+        full_name = user_data.get('fullName', '')
         
         with open(CSV_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
@@ -1319,15 +1434,23 @@ def save_csv():
                 grade_level = user_data.get('gradeLevel', '')
                 department = user_data.get('department', '')
                 
-                writer.writerow([timestamp, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
+                writer.writerow([full_name, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
                                transport, f"{distance:.6f}", duration_seconds, duration_minutes, 
                                experience_rating, user_type, grade_level, department])
         
-        append_route_to_excel(timestamp, route_id, segments, user_data)
+        # Save to database for better persistence
+        db_success = save_to_database(route_id, segments, user_data)
+        
+        # Try to append to Excel file
+        try:
+            timestamp = datetime.now().isoformat()
+            append_route_to_excel(timestamp, route_id, segments, user_data)
+        except Exception as e:
+            print(f"Warning: Failed to update Excel file: {e}")
         
         return jsonify({
             'success': True,
-            'message': 'Route saved to CSV'
+            'message': f'Route saved to CSV{" and database" if db_success else " (database save failed)"}'
         })
     except Exception as e:
         return jsonify({
@@ -1457,15 +1580,46 @@ def export_data(session_id):
 @app.route('/api/export-excel', methods=['GET'])
 def export_excel():
     try:
-        if not os.path.exists(EXCEL_FILE):
-            return jsonify({'success': False, 'error': 'Excel file not found yet. Save a route first.'}), 404
-
+        import pandas as pd
+        
+        df = None
+        
+        # First try to get data from database
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            df = pd.read_sql_query('SELECT * FROM routes', conn)
+            conn.close()
+            print(f"Loaded data from database: {len(df)} records")
+        except Exception as e:
+            print(f"Could not load from database: {e}")
+        
+        # If no database data, try CSV file
+        if df is None or len(df) == 0:
+            if os.path.exists(CSV_FILE):
+                df = pd.read_csv(CSV_FILE)
+                print(f"Loaded data from CSV: {len(df)} records")
+            else:
+                return jsonify({'success': False, 'error': 'No data found. Please save a route first.'}), 404
+        
+        if df is None or len(df) == 0:
+            return jsonify({'success': False, 'error': 'No data found. Please save a route first.'}), 404
+        
+        # Create Excel file in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Vectors')
+        
+        output.seek(0)
+        
         return send_file(
-            EXCEL_FILE,
+            output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name='vector_data.xlsx'
         )
+        
+    except ImportError:
+        return jsonify({'success': False, 'error': 'Excel export requires pandas and openpyxl packages. Please contact administrator.'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
