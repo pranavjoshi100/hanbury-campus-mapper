@@ -1,8 +1,9 @@
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, send_file
 import json
 import csv
 import os
 from datetime import datetime
+import io
 
 app = Flask(__name__)
 
@@ -11,14 +12,73 @@ vectors_storage = {}
 
 # Create a CSV file if it doesn't exist
 CSV_FILE = 'vector_data.csv'
+EXCEL_FILE = 'vector_data.xlsx'
 
 def initialize_csv():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Timestamp', 'Route_ID', 'Segment_ID', 'Start_Y', 'Start_X', 'End_Y', 'End_X', 'Transport_Mode', 'Distance_Pixels', 'Duration_Seconds', 'Duration_Minutes', 'User_Type', 'Grade_Level', 'Department'])
+            writer.writerow(['Timestamp', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
 
 initialize_csv()
+
+def append_route_to_excel(timestamp_iso, route_id, segments, user_data):
+    """Append a row to EXCEL_FILE with dynamic segment columns."""
+    try:
+        import pandas as pd
+    except Exception:
+        return
+
+    full_name = user_data.get('fullName', '')
+    demographic = user_data.get('userType', '')
+    department = user_data.get('department', '')
+    grade_level = user_data.get('gradeLevel', '') if demographic == 'student' else 'N/A'
+
+    row_data = {
+        'Full name': [full_name],
+        'Demographic': [demographic],
+        'Department': [department], 
+        'Grade level': [grade_level]
+    }
+
+    for idx, seg in enumerate(segments, start=1):
+        start_lat = seg.get('start', {}).get('lat', '')
+        start_lng = seg.get('start', {}).get('lng', '')
+        end_lat = seg.get('end', {}).get('lat', '')
+        end_lng = seg.get('end', {}).get('lng', '')
+        transport = seg.get('transportMode', '')
+        time_spent = int(seg.get('durationSeconds', 0))
+        experience_rating = seg.get('experienceRating', '')
+
+        start_point = f"{start_lat},{start_lng}" if start_lat and start_lng else ""
+        end_point = f"{end_lat},{end_lng}" if end_lat and end_lng else ""
+
+        row_data[f'Vector {idx}'] = [idx]
+        row_data[f'Transportation mode {idx}'] = [transport]
+        row_data[f'Start point {idx}'] = [start_point]
+        row_data[f'End point {idx}'] = [end_point]
+        row_data[f'Time spent {idx}'] = [time_spent]
+        row_data[f'Experience rating {idx}'] = [experience_rating]
+
+    new_row_df = pd.DataFrame(row_data)
+
+    if os.path.exists(EXCEL_FILE):
+        try:
+            existing = pd.read_excel(EXCEL_FILE)
+            all_cols = list(dict.fromkeys(list(existing.columns) + list(new_row_df.columns)))
+            existing = existing.reindex(columns=all_cols)
+            new_row_df = new_row_df.reindex(columns=all_cols)
+            combined = pd.concat([existing, new_row_df], ignore_index=True)
+        except Exception:
+            combined = new_row_df
+    else:
+        combined = new_row_df
+
+    try:
+        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
+            combined.to_excel(writer, index=False, sheet_name='Vectors')
+    except Exception:
+        pass
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -256,38 +316,10 @@ HTML_TEMPLATE = '''
                 padding: 4px 12px;
                 font-size: 11px;
             }
-            .transport-selector {
-                min-width: 90%;
-                width: 90vw;
-                padding: 12px 15px;
-                bottom: 10px;
-                left: 5vw;
-                transform: none;
-            }
-            .transport-selector h3 {
-                font-size: 14px;
-                margin-bottom: 8px;
-            }
-            .segment-info {
-                font-size: 11px;
-            }
-            .time-inputs {
-                gap: 8px;
-            }
-            .time-input input {
-                padding: 6px;
-                font-size: 13px;
-            }
         }
         @media (max-width: 480px) {
             body {
                 padding: 8px;
-            }
-            .header {
-                padding: 15px;
-            }
-            .header h1 {
-                font-size: 18px;
             }
             #map {
                 height: 350px;
@@ -315,73 +347,6 @@ HTML_TEMPLATE = '''
             }
             .user-info-item {
                 margin-right: 10px;
-            }
-            .instructions {
-                font-size: 12px;
-                padding: 12px;
-                margin-bottom: 15px;
-            }
-            .stats {
-                padding: 12px;
-                margin-bottom: 15px;
-            }
-            .stat-item {
-                font-size: 12px;
-                margin-bottom: 4px;
-            }
-            .transport-selector {
-                min-width: 95%;
-                width: 95vw;
-                padding: 10px 12px;
-                bottom: 5px;
-                left: 2.5vw;
-            }
-            .transport-selector h3 {
-                font-size: 13px;
-                margin: 0 0 8px 0;
-            }
-            .transport-selector-content {
-                gap: 8px;
-            }
-            .transport-selector select {
-                font-size: 13px;
-                padding: 6px;
-            }
-            .transport-selector button {
-                padding: 6px 12px;
-                font-size: 12px;
-            }
-            .time-input-group {
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            .time-input span {
-                font-size: 10px;
-            }
-            .vector-item {
-                padding: 12px;
-                margin-bottom: 8px;
-            }
-            .vector-title {
-                font-size: 14px;
-            }
-            .delete-btn {
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            .modal {
-                padding: 20px;
-                max-width: 90%;
-            }
-            .modal h2 {
-                font-size: 18px;
-            }
-            .form-group {
-                margin-bottom: 15px;
-            }
-            .form-group input,
-            .form-group select {
-                font-size: 16px;
             }
         }
         .vector-item {
@@ -473,6 +438,8 @@ HTML_TEMPLATE = '''
             z-index: 1000;
             display: none;
             min-width: 400px;
+            max-height: 90vh;
+            overflow-y: auto;
         }
         .transport-selector.active {
             display: block;
@@ -516,6 +483,13 @@ HTML_TEMPLATE = '''
             padding-top: 15px;
             border-top: 1px solid #e9ecef;
         }
+        .time-input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
         .time-inputs {
             display: flex;
             gap: 10px;
@@ -554,6 +528,20 @@ HTML_TEMPLATE = '''
             font-weight: 600;
             margin-left: 5px;
         }
+        .star-rating {
+            display: flex;
+            gap: 5px;
+            font-size: 28px;
+        }
+        .star {
+            cursor: pointer;
+            color: #ddd;
+            transition: color 0.2s;
+        }
+        .star:hover,
+        .star.active {
+            color: #ffc107;
+        }
     </style>
 </head>
 <body>
@@ -561,6 +549,10 @@ HTML_TEMPLATE = '''
         <div class="modal">
             <h2>Welcome! Please provide your information</h2>
             <form id="userInfoForm">
+                <div class="form-group">
+                    <label for="fullName">Full name:</label>
+                    <input type="text" id="fullName" placeholder="e.g., Jane Doe" required>
+                </div>
                 <div class="form-group">
                     <label for="userType">I am a:</label>
                     <select id="userType" required>
@@ -595,7 +587,10 @@ HTML_TEMPLATE = '''
 
     <div class="container">
         <div class="user-info-bar">
-            <div style="display: flex;">
+            <div style="display: flex; flex-wrap: wrap;">
+                <div class="user-info-item" id="displayFullNameContainer">
+                    <span class="user-info-label">Name:</span> <span id="displayFullName">-</span>
+                </div>
                 <div class="user-info-item">
                     <span class="user-info-label">Type:</span> <span id="displayUserType">-</span>
                 </div>
@@ -615,6 +610,7 @@ HTML_TEMPLATE = '''
             <button id="cancelBtn" class="btn btn-secondary" disabled>Cancel</button>
             <button id="clearBtn" class="btn btn-danger">Clear All</button>
             <button id="saveBtn" class="btn btn-primary">Save to Server</button>
+            <button id="exportExcelBtn" class="btn btn-secondary">Download Excel</button>
             <div id="modeIndicator" class="mode-indicator">Click "Start Drawing" to begin</div>
         </div>
         
@@ -622,12 +618,12 @@ HTML_TEMPLATE = '''
             <div id="map"></div>
             <div class="sidebar">
                 <div class="instructions">
-                    <strong>How to draw routes:</strong><br>
-                    1. Click "Start Drawing" button<br>
-                    2. Click points on the campus map<br>
-                    3. Select transport mode for each segment<br>
-                    4. Click "Finish Line" or double-click to complete<br>
-                    5. Click "Save to Server" when done
+                    <strong>How to map your walk:</strong><br>
+                    1. Click "Start Drawing"<br>
+                    2. Click points on the map<br>
+                    3. Rate and time each segment<br>
+                    4. Double-click or click "Finish Line" to complete<br>
+                    5. Click "Save to Server"
                 </div>
                 
                 <div class="stats">
@@ -640,6 +636,10 @@ HTML_TEMPLATE = '''
                         <span class="stat-value" id="segmentCount">0</span>
                     </div>
                     <div class="stat-item">
+                        <span class="stat-label">Total Distance:</span>
+                        <span class="stat-value" id="totalLength">0.00 km</span>
+                    </div>
+                    <div class="stat-item">
                         <span class="stat-label">Current Points:</span>
                         <span class="stat-value" id="currentPoints">0</span>
                     </div>
@@ -650,7 +650,7 @@ HTML_TEMPLATE = '''
         </div>
         
         <div id="transportSelector" class="transport-selector">
-            <h3>Transportation mode for this segment?</h3>
+            <h3>Tell us about this segment</h3>
             <div class="segment-info" id="segmentInfo"></div>
             <div class="transport-selector-content">
                 <select id="currentTransportMode">
@@ -662,7 +662,7 @@ HTML_TEMPLATE = '''
                 </select>
             </div>
             <div class="time-input-group">
-                <label>How long did this segment take?</label>
+                <label>How long did you spend at this point?</label>
                 <div class="time-inputs">
                     <div class="time-input">
                         <input type="number" id="segmentMinutes" min="0" max="999" value="0" placeholder="0">
@@ -674,6 +674,16 @@ HTML_TEMPLATE = '''
                     </div>
                 </div>
             </div>
+            <div class="time-input-group">
+                <label>How would you rate this location? (1-5 stars)</label>
+                <div class="star-rating" id="starRating">
+                    <span class="star" data-value="1">★</span>
+                    <span class="star" data-value="2">★</span>
+                    <span class="star" data-value="3">★</span>
+                    <span class="star" data-value="4">★</span>
+                    <span class="star" data-value="5">★</span>
+                </div>
+            </div>
             <div style="margin-top: 15px;">
                 <button id="confirmSegmentBtn" style="width: 100%;">Confirm Segment</button>
             </div>
@@ -682,25 +692,23 @@ HTML_TEMPLATE = '''
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script>
-        // Image overlay setup with simple CRS (pixel-based coordinates)
-        const imageBounds = [[0, 0], [1536, 2048]]; // [height, width] in pixels
-        
-        const map = L.map('map', {
-            crs: L.CRS.Simple,
-            minZoom: -2,
-            maxZoom: 2,
-            zoomControl: false,
-            attributionControl: false
-        });
-        
-        // Add the campus map image - place your image in the static folder
-        const imageUrl = '/static/campus-map.jpg';
-        const imageOverlay = L.imageOverlay(imageUrl, imageBounds).addTo(map);
-        
-        // Fit map to image bounds
-        map.fitBounds(imageOverlay.getBounds());
+        const imageBounds = [[0, 0], [1536, 2048]];
+
+const map = L.map('map', {
+    crs: L.CRS.Simple,
+    minZoom: -2,
+    maxZoom: 2,
+    zoomControl: false,
+    attributionControl: false
+});
+
+const imageUrl = '/static/campus-map.jpg';
+const imageOverlay = L.imageOverlay(imageUrl, imageBounds).addTo(map);
+
+map.fitBounds(imageOverlay.getBounds());
         
         let userData = {
+            fullName: '',
             userType: '',
             gradeLevel: '',
             department: ''
@@ -714,12 +722,14 @@ HTML_TEMPLATE = '''
         let tempLine = null;
         let vectors = new Map();
         let vectorCounter = 0;
+        let selectedRating = 0;
         
         const drawBtn = document.getElementById('drawBtn');
         const finishBtn = document.getElementById('finishBtn');
         const cancelBtn = document.getElementById('cancelBtn');
         const clearBtn = document.getElementById('clearBtn');
         const saveBtn = document.getElementById('saveBtn');
+        const exportExcelBtn = document.getElementById('exportExcelBtn');
         const modeIndicator = document.getElementById('modeIndicator');
         const mapElement = document.getElementById('map');
         const userInfoModal = document.getElementById('userInfoModal');
@@ -729,6 +739,20 @@ HTML_TEMPLATE = '''
         const segmentInfo = document.getElementById('segmentInfo');
         const segmentMinutesInput = document.getElementById('segmentMinutes');
         const segmentSecondsInput = document.getElementById('segmentSeconds');
+        const starRating = document.getElementById('starRating');
+        
+        starRating.addEventListener('click', function(e) {
+            if (e.target.classList.contains('star')) {
+                selectedRating = parseInt(e.target.dataset.value);
+                document.querySelectorAll('.star').forEach((star, idx) => {
+                    if (idx < selectedRating) {
+                        star.classList.add('active');
+                    } else {
+                        star.classList.remove('active');
+                    }
+                });
+            }
+        });
         
         confirmSegmentBtn.addEventListener('click', function() {
             if (!pendingSegment) return;
@@ -738,18 +762,21 @@ HTML_TEMPLATE = '''
             const seconds = parseInt(segmentSecondsInput.value) || 0;
             const totalSeconds = minutes * 60 + seconds;
             
-            if (totalSeconds <= 0) {
-                alert('Please enter a valid time duration (greater than 0)');
+            if (selectedRating === 0) {
+                alert('Please select a star rating (1-5)');
                 return;
             }
             
             pendingSegment.transportMode = transportMode;
             pendingSegment.durationSeconds = totalSeconds;
+            pendingSegment.experienceRating = selectedRating;
             currentSegments.push(pendingSegment);
             pendingSegment = null;
             
             segmentMinutesInput.value = '0';
             segmentSecondsInput.value = '0';
+            selectedRating = 0;
+            document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
             
             transportSelector.classList.remove('active');
             redrawCurrentSegments();
@@ -769,6 +796,7 @@ HTML_TEMPLATE = '''
         
         document.getElementById('userInfoForm').addEventListener('submit', function(e) {
             e.preventDefault();
+            userData.fullName = document.getElementById('fullName').value;
             userData.userType = document.getElementById('userType').value;
             userData.gradeLevel = document.getElementById('gradeLevel').value;
             userData.department = document.getElementById('department').value;
@@ -785,13 +813,22 @@ HTML_TEMPLATE = '''
                 'visitor': 'Visitor'
             };
             
+            const gradeLevelMap = {
+                'freshman': 'Freshman',
+                'sophomore': 'Sophomore',
+                'junior': 'Junior',
+                'senior': 'Senior',
+                'graduate': 'Graduate'
+            };
+            
+            document.getElementById('displayFullName').textContent = userData.fullName || '-';
             document.getElementById('displayUserType').textContent = userTypeMap[userData.userType] || '-';
             
             const gradeLevelContainer = document.getElementById('displayGradeLevelContainer');
             const gradeLevelDisplay = document.getElementById('displayGradeLevel');
             if (userData.gradeLevel) {
                 gradeLevelContainer.style.display = 'block';
-                gradeLevelDisplay.textContent = userData.gradeLevel;
+                gradeLevelDisplay.textContent = gradeLevelMap[userData.gradeLevel] || userData.gradeLevel;
             } else {
                 gradeLevelContainer.style.display = 'none';
             }
@@ -806,22 +843,40 @@ HTML_TEMPLATE = '''
             }
         }
         
-        function calculateDistance(point1, point2) {
-            const dx = point2[0] - point1[0];
-            const dy = point2[1] - point1[1];
-            return Math.sqrt(dx * dx + dy * dy);
+        function editUserInfo() {
+            document.getElementById('fullName').value = userData.fullName;
+            document.getElementById('userType').value = userData.userType;
+            document.getElementById('gradeLevel').value = userData.gradeLevel;
+            document.getElementById('department').value = userData.department;
+            
+            if (userData.userType === 'student') {
+                document.getElementById('gradeLevelGroup').style.display = 'block';
+            }
+            
+            userInfoModal.classList.add('active');
+        }
+        
+        function calculateDistance(latlng1, latlng2) {
+            return latlng1.distanceTo(latlng2) / 1000;
+        }
+        
+        function formatCoordinate(coord, precision = 6) {
+            return parseFloat(coord).toFixed(precision);
         }
         
         function updateStats() {
             const vectorCount = vectors.size;
+            let totalLength = 0;
             let totalSegments = 0;
             
             vectors.forEach(vector => {
+                totalLength += vector.length;
                 totalSegments += vector.segments.length;
             });
             
             document.getElementById('vectorCount').textContent = vectorCount;
             document.getElementById('segmentCount').textContent = totalSegments;
+            document.getElementById('totalLength').textContent = totalLength.toFixed(2) + ' km';
             document.getElementById('currentPoints').textContent = currentPoints.length;
         }
         
@@ -833,7 +888,7 @@ HTML_TEMPLATE = '''
                 cancelBtn.disabled = false;
                 
                 if (pendingSegment) {
-                    modeIndicator.textContent = 'Waiting for transport mode...';
+                    modeIndicator.textContent = `Waiting for rating and time...`;
                 } else {
                     modeIndicator.textContent = `Drawing - ${currentPoints.length} points, ${currentSegments.length} segments`;
                 }
@@ -851,7 +906,7 @@ HTML_TEMPLATE = '''
             updateStats();
         }
         
-        function addVectorToSidebar(id, segments) {
+        function addVectorToSidebar(id, segments, totalLength) {
             const vectorList = document.getElementById('vectorList');
             const vectorItem = document.createElement('div');
             vectorItem.className = 'vector-item';
@@ -886,9 +941,14 @@ HTML_TEMPLATE = '''
                 
                 segmentHTML += `
                     <div style="margin: 5px 0; padding: 5px; background: #f8f9fa; border-radius: 4px;">
-                        <span class="transport-badge transport-${seg.transportMode}">${transportLabels[seg.transportMode]}</span>
-                        <span style="font-size: 11px; color: #666; margin-left: 5px;">${segLength.toFixed(1)} px</span>
+                        <span class="transport-badge transport-${seg.transportMode}" style="font-size: 10px;">${transportLabels[seg.transportMode]}</span>
+                        <span style="font-size: 11px; color: #666; margin-left: 5px;">${segLength.toFixed(3)} km</span>
                         <span class="time-badge">${segTimeStr}</span>
+                        <span class="time-badge" style="background: #fff3cd; color: #856404;">★${seg.experienceRating}</span>
+                        <div style="font-size: 10px; color: #999; margin-top: 2px;">
+                            ${formatCoordinate(seg.start.lat)}, ${formatCoordinate(seg.start.lng)} → 
+                            ${formatCoordinate(seg.end.lat)}, ${formatCoordinate(seg.end.lng)}
+                        </div>
                     </div>
                 `;
             });
@@ -898,7 +958,7 @@ HTML_TEMPLATE = '''
                     <div class="vector-title">Route #${id}</div>
                     <button class="delete-btn" onclick="deleteVector(${id})">Delete</button>
                 </div>
-                <div class="vector-info">${segments.length} segments | ${totalTimeStr}</div>
+                <div class="vector-info">Total: ${totalLength.toFixed(3)} km | ${segments.length} segments | ${totalTimeStr}</div>
                 ${segmentHTML}
             `;
             
@@ -977,10 +1037,11 @@ HTML_TEMPLATE = '''
                     body: JSON.stringify({
                         routeId: routeId,
                         segments: segments.map(seg => ({
-                            start: {y: seg.start[0], x: seg.start[1]},
-                            end: {y: seg.end[0], x: seg.end[1]},
+                            start: {lat: seg.start.lat, lng: seg.start.lng},
+                            end: {lat: seg.end.lat, lng: seg.end.lng},
                             transportMode: seg.transportMode,
-                            durationSeconds: seg.durationSeconds
+                            durationSeconds: seg.durationSeconds,
+                            experienceRating: seg.experienceRating
                         })),
                         userData: userData
                     })
@@ -999,13 +1060,18 @@ HTML_TEMPLATE = '''
             if (currentSegments.length === 0) return;
             
             if (pendingSegment) {
-                alert('Please confirm the transportation mode before finishing.');
+                alert('Please confirm the transportation mode and rating for the current segment before finishing.');
                 return;
             }
             
             vectorCounter++;
             
             const finalSegments = [...currentSegments];
+            
+            let totalLength = 0;
+            finalSegments.forEach(seg => {
+                totalLength += calculateDistance(seg.start, seg.end);
+            });
             
             currentPolylines.forEach(polyline => map.removeLayer(polyline));
             currentPolylines = [];
@@ -1030,7 +1096,8 @@ HTML_TEMPLATE = '''
                     <div style="text-align: center;">
                         <strong>Route #${vectorCounter}</strong><br>
                         ${transportLabels[seg.transportMode]}<br>
-                        ${calculateDistance(seg.start, seg.end).toFixed(1)} pixels
+                        ${calculateDistance(seg.start, seg.end).toFixed(3)} km<br>
+                        ★ ${seg.experienceRating}/5
                     </div>
                 `);
                 
@@ -1040,10 +1107,11 @@ HTML_TEMPLATE = '''
             vectors.set(vectorCounter, {
                 layers: finalLayers,
                 segments: finalSegments,
+                length: totalLength,
                 userData: {...userData}
             });
             
-            addVectorToSidebar(vectorCounter, finalSegments);
+            addVectorToSidebar(vectorCounter, finalSegments, totalLength);
             saveRouteToCSV(vectorCounter, finalSegments);
             
             cancelDrawing();
@@ -1093,11 +1161,13 @@ HTML_TEMPLATE = '''
                 vectors: Array.from(vectors.entries()).map(([id, vector]) => ({
                     id: id,
                     segments: vector.segments.map(seg => ({
-                        start: {y: seg.start[0], x: seg.start[1]},
-                        end: {y: seg.end[0], x: seg.end[1]},
+                        start: {lat: seg.start.lat, lng: seg.start.lng},
+                        end: {lat: seg.end.lat, lng: seg.end.lng},
                         transportMode: seg.transportMode,
-                        durationSeconds: seg.durationSeconds
+                        durationSeconds: seg.durationSeconds,
+                        experienceRating: seg.experienceRating
                     })),
+                    length: vector.length,
                     userData: vector.userData
                 }))
             };
@@ -1113,25 +1183,13 @@ HTML_TEMPLATE = '''
                 
                 const result = await response.json();
                 if (result.success) {
-                    alert('Data saved successfully! Session ID: ' + result.session_id);
+                    alert('Data saved successfully! ID: ' + result.session_id);
                 } else {
                     alert('Error saving data: ' + result.error);
                 }
             } catch (error) {
                 alert('Error saving data: ' + error.message);
             }
-        }
-        
-        function editUserInfo() {
-            document.getElementById('userType').value = userData.userType;
-            document.getElementById('gradeLevel').value = userData.gradeLevel;
-            document.getElementById('department').value = userData.department;
-            
-            if (userData.userType === 'student') {
-                document.getElementById('gradeLevelGroup').style.display = 'block';
-            }
-            
-            userInfoModal.classList.add('active');
         }
         
         drawBtn.addEventListener('click', () => {
@@ -1146,30 +1204,36 @@ HTML_TEMPLATE = '''
         cancelBtn.addEventListener('click', cancelDrawing);
         clearBtn.addEventListener('click', clearAllVectors);
         saveBtn.addEventListener('click', saveToServer);
+        exportExcelBtn.addEventListener('click', () => {
+            window.location.href = '/api/export-excel';
+        });
         
         map.on('click', function(e) {
             if (!isDrawing) return;
             
             if (pendingSegment) {
-                alert('Please select a transportation mode for the current segment before adding another point.');
+                alert('Please select a transportation mode and rating for the current segment before adding another point.');
                 return;
             }
             
-            const latlng = [e.latlng.lat, e.latlng.lng];
+            const latlng = e.latlng;
             
             if (currentPoints.length >= 1) {
                 pendingSegment = {
                     start: currentPoints[currentPoints.length - 1],
                     end: latlng,
-                    transportMode: null
+                    transportMode: null,
+                    experienceRating: 0
                 };
                 
                 const distance = calculateDistance(pendingSegment.start, pendingSegment.end);
-                segmentInfo.textContent = `Segment ${currentSegments.length + 1}: ${distance.toFixed(1)} pixels`;
+                segmentInfo.textContent = `Segment ${currentSegments.length + 1}: ${distance.toFixed(3)} km`;
                 transportSelector.classList.add('active');
                 currentTransportModeSelect.value = 'walking';
                 segmentMinutesInput.value = '0';
                 segmentSecondsInput.value = '0';
+                selectedRating = 0;
+                document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
                 segmentMinutesInput.focus();
             }
             
@@ -1193,13 +1257,16 @@ HTML_TEMPLATE = '''
             }
             
             const lastPoint = currentPoints[currentPoints.length - 1];
-            const currentPos = [e.latlng.lat, e.latlng.lng];
-            tempLine = L.polyline([lastPoint, currentPos], {
+            tempLine = L.polyline([lastPoint, e.latlng], {
                 color: '#999999',
                 weight: 2,
                 opacity: 0.3,
                 dashArray: '5, 5'
             }).addTo(map);
+        });
+        
+        window.addEventListener('resize', function() {
+            map.invalidateSize();
         });
         
         updateUI();
@@ -1226,26 +1293,37 @@ def save_csv():
             writer = csv.writer(f)
             
             for idx, segment in enumerate(segments):
-                start_y = segment['start']['y']
-                start_x = segment['start']['x']
-                end_y = segment['end']['y']
-                end_x = segment['end']['x']
+                start_lat = segment['start']['lat']
+                start_lng = segment['start']['lng']
+                end_lat = segment['end']['lat']
+                end_lng = segment['end']['lng']
                 transport = segment['transportMode']
                 duration_seconds = segment.get('durationSeconds', 0)
                 duration_minutes = round(duration_seconds / 60, 2)
+                experience_rating = segment.get('experienceRating', '')
                 
-                # Calculate pixel distance
-                dx = end_x - start_x
-                dy = end_y - start_y
-                distance = (dx * dx + dy * dy) ** 0.5
+                from math import radians, sin, cos, sqrt, atan2
+                R = 6371
+                
+                lat1, lon1 = radians(start_lat), radians(start_lng)
+                lat2, lon2 = radians(end_lat), radians(end_lng)
+                
+                dlat = lat2 - lat1
+                dlon = lon2 - lon1
+                
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                c = 2 * atan2(sqrt(a), sqrt(1-a))
+                distance = R * c
                 
                 user_type = user_data.get('userType', '')
                 grade_level = user_data.get('gradeLevel', '')
                 department = user_data.get('department', '')
                 
-                writer.writerow([timestamp, route_id, idx+1, start_y, start_x, end_y, end_x, 
-                               transport, f"{distance:.2f}", duration_seconds, duration_minutes, 
-                               user_type, grade_level, department])
+                writer.writerow([timestamp, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
+                               transport, f"{distance:.6f}", duration_seconds, duration_minutes, 
+                               experience_rating, user_type, grade_level, department])
+        
+        append_route_to_excel(timestamp, route_id, segments, user_data)
         
         return jsonify({
             'success': True,
@@ -1307,7 +1385,7 @@ def list_sessions():
             sessions.append({
                 'session_id': session_id,
                 'timestamp': session_data['timestamp'],
-                'route_count': len(session_data['data'].get('vectors', []))
+                'vector_count': len(session_data['data'].get('vectors', []))
             })
         
         return jsonify({
@@ -1331,28 +1409,38 @@ def export_data(session_id):
         
         data = vectors_storage[session_id]['data']
         
-        csv_lines = ['Route_ID,Segment_ID,Start_Y,Start_X,End_Y,End_X,Transport_Mode,Distance_Pixels,Duration_Seconds,Duration_Minutes,User_Type,Grade_Level,Department']
+        csv_lines = ['Route_ID,Segment_ID,Start_Lat,Start_Lng,End_Lat,End_Lng,Transport_Mode,Distance_KM,Duration_Seconds,Duration_Minutes,Experience_Rating,User_Type,Grade_Level,Department']
         
         for vector in data.get('vectors', []):
             route_id = vector['id']
             for idx, segment in enumerate(vector['segments']):
-                start_y = segment['start']['y']
-                start_x = segment['start']['x']
-                end_y = segment['end']['y']
-                end_x = segment['end']['x']
+                start_lat = segment['start']['lat']
+                start_lng = segment['start']['lng']
+                end_lat = segment['end']['lat']
+                end_lng = segment['end']['lng']
                 transport = segment['transportMode']
                 duration_seconds = segment.get('durationSeconds', 0)
                 duration_minutes = round(duration_seconds / 60, 2)
+                experience_rating = segment.get('experienceRating', '')
                 
-                dx = end_x - start_x
-                dy = end_y - start_y
-                distance = (dx * dx + dy * dy) ** 0.5
+                from math import radians, sin, cos, sqrt, atan2
+                R = 6371
+                
+                lat1, lon1 = radians(start_lat), radians(start_lng)
+                lat2, lon2 = radians(end_lat), radians(end_lng)
+                
+                dlat = lat2 - lat1
+                dlon = lon2 - lon1
+                
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                c = 2 * atan2(sqrt(a), sqrt(1-a))
+                distance = R * c
                 
                 user_type = vector.get('userData', {}).get('userType', '')
                 grade_level = vector.get('userData', {}).get('gradeLevel', '')
                 department = vector.get('userData', {}).get('department', '')
                 
-                csv_lines.append(f"{route_id},{idx+1},{start_y},{start_x},{end_y},{end_x},{transport},{distance:.2f},{duration_seconds},{duration_minutes},{user_type},{grade_level},{department}")
+                csv_lines.append(f"{route_id},{idx+1},{start_lat},{start_lng},{end_lat},{end_lng},{transport},{distance:.6f},{duration_seconds},{duration_minutes},{experience_rating},{user_type},{grade_level},{department}")
         
         csv_content = '\n'.join(csv_lines)
         
@@ -1365,6 +1453,35 @@ def export_data(session_id):
             'success': False,
             'error': str(e)
         }), 400
+
+@app.route('/api/export-excel', methods=['GET'])
+def export_excel():
+    try:
+        if not os.path.exists(EXCEL_FILE):
+            return jsonify({'success': False, 'error': 'Excel file not found yet. Save a route first.'}), 404
+
+        return send_file(
+            EXCEL_FILE,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='vector_data.xlsx'
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/clear-data', methods=['POST'])
+def clear_data():
+    try:
+        if os.path.exists(EXCEL_FILE):
+            os.remove(EXCEL_FILE)
+
+        if os.path.exists(CSV_FILE):
+            os.remove(CSV_FILE)
+        initialize_csv()
+
+        return jsonify({'success': True, 'message': 'Excel and CSV cleared'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
