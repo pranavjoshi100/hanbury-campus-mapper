@@ -42,6 +42,7 @@ def init_database():
             duration_seconds INTEGER NOT NULL,
             duration_minutes REAL NOT NULL,
             experience_rating INTEGER NOT NULL,
+            segment_type TEXT NOT NULL,
             user_type TEXT NOT NULL,
             grade_level TEXT,
             department TEXT,
@@ -81,15 +82,18 @@ def save_to_database(route_id, segments, user_data):
             c = 2 * atan2(sqrt(a), sqrt(1-a))
             distance = R * c
             
+            # Determine segment type based on duration and rating
+            segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
+            
             cursor.execute('''
                 INSERT INTO routes (timestamp, route_id, segment_id, start_lat, start_lng, 
                                   end_lat, end_lng, transport_mode, distance_km, duration_seconds, 
-                                  duration_minutes, experience_rating, user_type, grade_level, 
+                                  duration_minutes, experience_rating, segment_type, user_type, grade_level, 
                                   department, full_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (timestamp, route_id, idx+1, start_lat, start_lng, end_lat, end_lng,
                   transport, distance, duration_seconds, duration_minutes, experience_rating,
-                  user_data.get('userType', ''), user_data.get('gradeLevel', ''),
+                  segment_type, user_data.get('userType', ''), user_data.get('gradeLevel', ''),
                   user_data.get('department', ''), user_data.get('fullName', '')))
         
         conn.commit()
@@ -107,7 +111,7 @@ def initialize_csv():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
+            writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
     else:
         # Check if header needs updating and fix it
         with open(CSV_FILE, 'r', newline='') as f:
@@ -121,7 +125,7 @@ def initialize_csv():
                 # Write new header and content
                 with open(CSV_FILE, 'w', newline='') as fd:
                     writer = csv.writer(fd)
-                    writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'User_Type', 'Grade_Level', 'Department'])
+                    writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
                     # Rewrite existing data, but skip the old header
                     lines = content.split('\n')
                     if len(lines) > 1:
@@ -726,6 +730,13 @@ HTML_TEMPLATE = '''
             <button id="clearBtn" class="btn btn-danger">Clear All</button>
             <button id="saveBtn" class="btn btn-primary">Save to Server</button>
             <button id="exportExcelBtn" class="btn btn-secondary">Download Excel</button>
+            <div style="margin-left: 10px;">
+                <label style="font-size: 12px; color: #666;">Mode:</label>
+                <select id="drawingMode" style="margin-left: 5px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                    <option value="detailed">Stopping Points (rate each point)</option>
+                    <option value="passing">Passing Points (no prompts)</option>
+                </select>
+            </div>
             <div id="modeIndicator" class="mode-indicator">Click "Start Drawing" to begin</div>
         </div>
         
@@ -734,11 +745,12 @@ HTML_TEMPLATE = '''
             <div class="sidebar">
                 <div class="instructions">
                     <strong>How to map your walk:</strong><br>
-                    1. Click "Start Drawing"<br>
-                    2. Click points on the map<br>
-                    3. Rate and time each segment<br>
-                    4. Double-click or click "Finish Line" to complete<br>
-                    5. Click "Save to Server"
+                    1. Choose your mode: "Stopping Points" (rate each point) or "Passing Points" (no prompts)<br>
+                    2. Click "Start Drawing"<br>
+                    3. Click points on the map<br>
+                    4. In Stopping Points mode: rate and time each segment<br>
+                    5. Double-click or click "Finish Line" to complete<br>
+                    6. Click "Save to Server"
                 </div>
                 
                 <div class="stats">
@@ -838,6 +850,7 @@ map.fitBounds(imageOverlay.getBounds());
         let vectors = new Map();
         let vectorCounter = 0;
         let selectedRating = 0;
+        let drawingMode = 'detailed'; // 'detailed' or 'passing'
         
         const drawBtn = document.getElementById('drawBtn');
         const finishBtn = document.getElementById('finishBtn');
@@ -855,6 +868,7 @@ map.fitBounds(imageOverlay.getBounds());
         const segmentMinutesInput = document.getElementById('segmentMinutes');
         const segmentSecondsInput = document.getElementById('segmentSeconds');
         const starRating = document.getElementById('starRating');
+        const drawingModeSelect = document.getElementById('drawingMode');
         
         starRating.addEventListener('click', function(e) {
             if (e.target.classList.contains('star')) {
@@ -867,6 +881,10 @@ map.fitBounds(imageOverlay.getBounds());
                     }
                 });
             }
+        });
+        
+        drawingModeSelect.addEventListener('change', function() {
+            drawingMode = this.value;
         });
         
         confirmSegmentBtn.addEventListener('click', function() {
@@ -1005,7 +1023,8 @@ map.fitBounds(imageOverlay.getBounds());
                 if (pendingSegment) {
                     modeIndicator.textContent = `Waiting for rating and time...`;
                 } else {
-                    modeIndicator.textContent = `Drawing - ${currentPoints.length} points, ${currentSegments.length} segments`;
+                    const modeText = drawingMode === 'detailed' ? 'Stopping Points' : 'Passing Points';
+                    modeIndicator.textContent = `${modeText} Mode - ${currentPoints.length} points, ${currentSegments.length} segments`;
                 }
                 
                 mapElement.classList.remove('normal-cursor');
@@ -1054,9 +1073,13 @@ map.fitBounds(imageOverlay.getBounds());
                     ? `${segMinutes}m ${segSeconds}s` 
                     : `${segSeconds}s`;
                 
+                const isPassingSegment = seg.durationSeconds === 0 && seg.experienceRating === 0;
+                const segmentType = isPassingSegment ? 'Passing' : 'Stopping';
+                
                 segmentHTML += `
                     <div style="margin: 5px 0; padding: 5px; background: #f8f9fa; border-radius: 4px;">
                         <span class="transport-badge transport-${seg.transportMode}" style="font-size: 10px;">${transportLabels[seg.transportMode]}</span>
+                        <span style="font-size: 10px; color: #666; margin-left: 5px; background: #e9ecef; padding: 1px 4px; border-radius: 3px;">${segmentType}</span>
                         <span style="font-size: 11px; color: #666; margin-left: 5px;">${segLength.toFixed(3)} km</span>
                         <span class="time-badge">${segTimeStr}</span>
                         <span class="time-badge" style="background: #fff3cd; color: #856404;">★${seg.experienceRating}</span>
@@ -1085,6 +1108,7 @@ map.fitBounds(imageOverlay.getBounds());
             currentPoints = [];
             currentSegments = [];
             pendingSegment = null;
+            drawingMode = drawingModeSelect.value; // Update mode from selector
             currentTransportModeSelect.value = 'walking';
             updateUI();
         }
@@ -1334,22 +1358,35 @@ map.fitBounds(imageOverlay.getBounds());
             const latlng = e.latlng;
             
             if (currentPoints.length >= 1) {
-                pendingSegment = {
-                    start: currentPoints[currentPoints.length - 1],
-                    end: latlng,
-                    transportMode: null,
-                    experienceRating: 0
-                };
-                
-                const distance = calculateDistance(pendingSegment.start, pendingSegment.end);
-                segmentInfo.textContent = `Segment ${currentSegments.length + 1}: ${distance.toFixed(3)} km`;
-                transportSelector.classList.add('active');
-                currentTransportModeSelect.value = 'walking';
-                segmentMinutesInput.value = '0';
-                segmentSecondsInput.value = '0';
-                selectedRating = 0;
-                document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
-                segmentMinutesInput.focus();
+                if (drawingMode === 'detailed') {
+                    // Detailed mode: prompt for transportation, time, and rating
+                    pendingSegment = {
+                        start: currentPoints[currentPoints.length - 1],
+                        end: latlng,
+                        transportMode: null,
+                        experienceRating: 0
+                    };
+                    
+                    const distance = calculateDistance(pendingSegment.start, pendingSegment.end);
+                    segmentInfo.textContent = `Segment ${currentSegments.length + 1}: ${distance.toFixed(3)} km`;
+                    transportSelector.classList.add('active');
+                    currentTransportModeSelect.value = 'walking';
+                    segmentMinutesInput.value = '0';
+                    segmentSecondsInput.value = '0';
+                    selectedRating = 0;
+                    document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
+                    segmentMinutesInput.focus();
+                } else {
+                    // Passing mode: automatically create segment with default values
+                    const segment = {
+                        start: currentPoints[currentPoints.length - 1],
+                        end: latlng,
+                        transportMode: 'walking',
+                        durationSeconds: 0,
+                        experienceRating: 0
+                    };
+                    currentSegments.push(segment);
+                }
             }
             
             currentPoints.push(latlng);
@@ -1434,9 +1471,12 @@ def save_csv():
                 grade_level = user_data.get('gradeLevel', '')
                 department = user_data.get('department', '')
                 
+                # Determine segment type based on duration and rating
+                segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
+                
                 writer.writerow([full_name, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
                                transport, f"{distance:.6f}", duration_seconds, duration_minutes, 
-                               experience_rating, user_type, grade_level, department])
+                               experience_rating, segment_type, user_type, grade_level, department])
         
         # Save to database for better persistence
         db_success = save_to_database(route_id, segments, user_data)
@@ -1532,7 +1572,7 @@ def export_data(session_id):
         
         data = vectors_storage[session_id]['data']
         
-        csv_lines = ['Route_ID,Segment_ID,Start_Lat,Start_Lng,End_Lat,End_Lng,Transport_Mode,Distance_KM,Duration_Seconds,Duration_Minutes,Experience_Rating,User_Type,Grade_Level,Department']
+        csv_lines = ['Route_ID,Segment_ID,Start_Lat,Start_Lng,End_Lat,End_Lng,Transport_Mode,Distance_KM,Duration_Seconds,Duration_Minutes,Experience_Rating,Segment_Type,User_Type,Grade_Level,Department']
         
         for vector in data.get('vectors', []):
             route_id = vector['id']
@@ -1563,7 +1603,10 @@ def export_data(session_id):
                 grade_level = vector.get('userData', {}).get('gradeLevel', '')
                 department = vector.get('userData', {}).get('department', '')
                 
-                csv_lines.append(f"{route_id},{idx+1},{start_lat},{start_lng},{end_lat},{end_lng},{transport},{distance:.6f},{duration_seconds},{duration_minutes},{experience_rating},{user_type},{grade_level},{department}")
+                # Determine segment type based on duration and rating
+                segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
+                
+                csv_lines.append(f"{route_id},{idx+1},{start_lat},{start_lng},{end_lat},{end_lng},{transport},{distance:.6f},{duration_seconds},{duration_minutes},{experience_rating},{segment_type},{user_type},{grade_level},{department}")
         
         csv_content = '\n'.join(csv_lines)
         
@@ -1638,4 +1681,4 @@ def clear_data():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=2)
