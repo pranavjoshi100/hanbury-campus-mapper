@@ -1,3 +1,4 @@
 Timestamp,Route_ID,Segment_ID,Start_Lat,Start_Lng,End_Lat,End_Lng,Transport_Mode,Distance_KM,Duration_Seconds,Duration_Minutes,User_Type,Grade_Level,Department
 2025-10-17T16:03:34.581454,1,1,1074,972,834,1054,walking,253.62,600,10.0,student,sophomore,Engineering
 2025-10-17T16:03:34.581454,1,2,834,1054,834,1226,walking,172.00,600,10.0,student,sophomore,Engineering
+,1,1,1080,977,834,1058,walking,10413.189046,600,10.0,4,stopping,student,Freshman,Ross

@@ -8,17 +8,10 @@ import io
 
 app = Flask(__name__)
 
-# Store vectors in memory (in production, use a database)
 vectors_storage = {}
 
-# Create a CSV file if it doesn't exist
 CSV_FILE = 'vector_data.csv'
 EXCEL_FILE = 'vector_data.xlsx'
-
-# Note: On Render and similar platforms, files are ephemeral and may be lost on redeployment
-# For production, consider using a database (PostgreSQL, MongoDB) or cloud storage (S3, Google Cloud Storage)
-
-# Database file for better persistence
 DB_FILE = 'campus_data.db'
 
 def init_database():
@@ -26,7 +19,6 @@ def init_database():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # Create routes table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS routes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +63,6 @@ def save_to_database(route_id, segments, user_data):
             duration_minutes = round(duration_seconds / 60, 2)
             experience_rating = segment.get('experienceRating', 0)
             
-            # Calculate distance
             from math import radians, sin, cos, sqrt, atan2
             R = 6371
             lat1, lon1 = radians(start_lat), radians(start_lng)
@@ -82,7 +73,6 @@ def save_to_database(route_id, segments, user_data):
             c = 2 * atan2(sqrt(a), sqrt(1-a))
             distance = R * c
             
-            # Determine segment type based on duration and rating
             segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
             
             cursor.execute('''
@@ -98,13 +88,11 @@ def save_to_database(route_id, segments, user_data):
         
         conn.commit()
         conn.close()
-        print(f"Route {route_id} saved to database")
         return True
     except Exception as e:
         print(f"Error saving to database: {e}")
         return False
 
-# Initialize database on startup
 init_database()
 
 def initialize_csv():
@@ -112,92 +100,8 @@ def initialize_csv():
         with open(CSV_FILE, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
-    else:
-        # Check if header needs updating and fix it
-        with open(CSV_FILE, 'r', newline='') as f:
-            reader = csv.reader(f)
-            header = next(reader, [])
-            if 'Full_Name' not in header or 'Timestamp' in header:
-                # Backup current content
-                f.seek(0)
-                content = f.read()
-                
-                # Write new header and content
-                with open(CSV_FILE, 'w', newline='') as fd:
-                    writer = csv.writer(fd)
-                    writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
-                    # Rewrite existing data, but skip the old header
-                    lines = content.split('\n')
-                    if len(lines) > 1:
-                        fd.write('\n'.join(lines[1:]))
 
 initialize_csv()
-
-def append_route_to_excel(timestamp_iso, route_id, segments, user_data):
-    """Append a row to EXCEL_FILE with dynamic segment columns."""
-    try:
-        import pandas as pd
-    except ImportError:
-        print("Warning: pandas not available, Excel export disabled")
-        return
-
-    full_name = user_data.get('fullName', '')
-    demographic = user_data.get('userType', '')
-    department = user_data.get('department', '')
-    grade_level = user_data.get('gradeLevel', '') if demographic == 'student' else 'N/A'
-
-    row_data = {
-        'Full name': [full_name],
-        'Demographic': [demographic],
-        'Department': [department], 
-        'Grade level': [grade_level]
-    }
-
-    for idx, seg in enumerate(segments, start=1):
-        start_lat = seg.get('start', {}).get('lat', '')
-        start_lng = seg.get('start', {}).get('lng', '')
-        end_lat = seg.get('end', {}).get('lat', '')
-        end_lng = seg.get('end', {}).get('lng', '')
-        transport = seg.get('transportMode', '')
-        time_spent = int(seg.get('durationSeconds', 0))
-        experience_rating = seg.get('experienceRating', '')
-
-        start_point = f"{start_lat},{start_lng}" if start_lat and start_lng else ""
-        end_point = f"{end_lat},{end_lng}" if end_lat and end_lng else ""
-
-        row_data[f'Vector {idx}'] = [idx]
-        row_data[f'Transportation mode {idx}'] = [transport]
-        row_data[f'Start point {idx}'] = [start_point]
-        row_data[f'End point {idx}'] = [end_point]
-        row_data[f'Time spent {idx}'] = [time_spent]
-        row_data[f'Experience rating {idx}'] = [experience_rating]
-
-    new_row_df = pd.DataFrame(row_data)
-
-    if os.path.exists(EXCEL_FILE):
-        try:
-            existing = pd.read_excel(EXCEL_FILE)
-            all_cols = list(dict.fromkeys(list(existing.columns) + list(new_row_df.columns)))
-            existing = existing.reindex(columns=all_cols)
-            new_row_df = new_row_df.reindex(columns=all_cols)
-            combined = pd.concat([existing, new_row_df], ignore_index=True)
-        except Exception:
-            combined = new_row_df
-    else:
-        combined = new_row_df
-
-    try:
-        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
-            combined.to_excel(writer, index=False, sheet_name='Vectors')
-        print(f"Excel file updated: {EXCEL_FILE}")
-    except Exception as e:
-        print(f"Error writing Excel file: {e}")
-        # Try to create a basic Excel file if it fails
-        try:
-            combined.to_excel(EXCEL_FILE, index=False, sheet_name='Vectors')
-            print(f"Excel file created with basic method: {EXCEL_FILE}")
-        except Exception as e2:
-            print(f"Failed to create Excel file: {e2}")
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -207,21 +111,264 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Campus Walk Mapper</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
-        body {
+        * {
             margin: 0;
-            padding: 20px;
-            font-family: Arial, sans-serif;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
+        
+        /* Header */
+        .header {
+            background: white;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 100;
+        }
+        
+        .logo {
+            width: 50px;
+            height: 50px;
+            background: #E4351A;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        
+        .header-nav {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+            flex: 1;
+            justify-content: center;
+        }
+        
+        .nav-btn {
+            background: none;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            color: #666;
+            transition: color 0.2s;
+        }
+        
+        .nav-btn:hover {
+            color: #E4351A;
+        }
+        
+        .nav-btn.active {
+            color: #E4351A;
+            font-weight: 500;
+        }
+        
+        .help-btn {
+            color: #E4351A;
+            font-size: 16px;
+        }
+        
+        /* Map Container */
+        .map-container {
+            position: relative;
+            height: calc(100vh - 74px);
+            width: 100%;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Search Bar */
+        .search-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: white;
+            border-radius: 24px;
+            padding: 12px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 300px;
+        }
+        
+        .search-bar i {
+            color: #999;
+        }
+        
+        .search-bar input {
+            border: none;
+            outline: none;
+            flex: 1;
+            font-size: 14px;
+        }
+        
+        .search-bar input::placeholder {
+            color: #ccc;
+        }
+        
+        /* Add Stop Button */
+        .add-stop-btn {
+            position: absolute;
+            top: 80px;
+            left: 20px;
+            z-index: 1000;
+            background: #E4351A;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(228, 53, 26, 0.3);
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .add-stop-btn.active {
+            display: flex;
+        }
+        
+        /* Current Path Sidebar */
+        .sidebar {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 400px;
+            max-height: 60vh;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            overflow: hidden;
+            z-index: 1000;
+            display: none;
+        }
+        
+        .sidebar.active {
+            display: block;
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .sidebar-title {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .sidebar-date {
+            font-size: 14px;
+            color: #999;
+        }
+        
+        .edit-btn {
+            background: none;
+            border: none;
+            color: #E4351A;
+            font-size: 18px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        .edit-btn:hover {
+            opacity: 0.7;
+        }
+        
+        .sidebar-content {
+            overflow-y: auto;
+            max-height: calc(60vh - 80px);
+            padding: 20px;
+        }
+        
+        .segment-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px;
+            background: #f9f9f9;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .segment-item:hover {
+            background: #f0f0f0;
+        }
+        
+        .segment-item.editing {
+            background: #fff5f3;
+            border: 2px solid #E4351A;
+        }
+        
+        .segment-number {
+            width: 32px;
+            height: 32px;
+            background: #E4351A;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        
+        .segment-details {
+            flex: 1;
+        }
+        
+        .segment-transport {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .segment-transport i {
+            font-size: 18px;
+        }
+        
+        .segment-meta {
+            display: flex;
+            gap: 16px;
+            margin-top: 4px;
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .segment-stars {
+            color: #FFC107;
+        }
+        
+        /* Modal Overlay */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -234,974 +381,857 @@ HTML_TEMPLATE = '''
             align-items: center;
             justify-content: center;
         }
-        .modal-overlay.active { display: flex; }
-        .modal {
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        /* Welcome Modal */
+        .welcome-modal {
             background: white;
-            border-radius: 10px;
-            padding: 30px;
-            max-width: 500px;
+            border-radius: 24px;
+            padding: 48px;
+            max-width: 600px;
             width: 90%;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
-        .modal h2 {
-            margin-top: 0;
-            color: #667eea;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
+        
+        .welcome-title {
+            font-size: 32px;
+            font-weight: 700;
             margin-bottom: 8px;
-            font-weight: 500;
-            color: #333;
+            text-align: center;
         }
-        .form-group select,
-        .form-group input {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #e9ecef;
-            border-radius: 5px;
-            font-size: 14px;
-            box-sizing: border-box;
+        
+        .welcome-subtitle {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 32px;
+            text-align: center;
         }
-        .form-group select:focus,
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
+        
+        .form-section {
+            margin-bottom: 32px;
         }
-        .modal-buttons {
+        
+        .form-label {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: block;
+        }
+        
+        .button-group {
             display: flex;
-            gap: 10px;
-            margin-top: 25px;
-        }
-        .btn-block {
-            flex: 1;
-        }
-        .user-info-bar {
-            background: #e7f3ff;
-            padding: 10px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 14px;
-            color: #0c5460;
-            border-bottom: 1px solid #bee5eb;
-        }
-        .user-info-item {
-            margin-right: 20px;
-        }
-        .user-info-label {
-            font-weight: bold;
-        }
-        .edit-info-btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 5px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-        .edit-info-btn:hover {
-            background: #5a6fd8;
-        }
-        .controls {
-            background: #f8f9fa;
-            padding: 15px 20px;
-            border-bottom: 1px solid #e9ecef;
-            display: flex;
-            gap: 10px;
-            align-items: center;
+            gap: 12px;
             flex-wrap: wrap;
         }
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+        
+        .option-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            background: white;
             font-size: 14px;
             font-weight: 500;
+            cursor: pointer;
             transition: all 0.2s;
         }
-        .btn-primary {
-            background: #667eea;
+        
+        .option-btn:hover {
+            border-color: #E4351A;
+            background: #fff5f3;
+        }
+        
+        .option-btn.active {
+            border-color: #E4351A;
+            background: #E4351A;
             color: white;
         }
-        .btn-primary:hover {
-            background: #5a6fd8;
-        }
-        .btn-primary.active {
-            background: #4c63d2;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
-        }
-        .btn-danger {
-            background: #dc3545;
-            color: white;
-        }
-        .btn-danger:hover {
-            background: #c82333;
-        }
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-        }
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        .mode-indicator {
-            margin-left: auto;
-            padding: 8px 12px;
-            background: #e7f3ff;
-            border-radius: 5px;
+        
+        .text-input {
+            width: 100%;
+            padding: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
             font-size: 14px;
-            color: #0c5460;
-            font-weight: 500;
+            transition: border-color 0.2s;
         }
-        .content {
-            display: flex;
-            height: 600px;
+        
+        .text-input:focus {
+            outline: none;
+            border-color: #E4351A;
         }
-        #map {
-            flex: 1;
-            height: 100%;
-            cursor: crosshair;
-        }
-        #map.normal-cursor {
-            cursor: default;
-        }
-        .sidebar {
-            width: 350px;
-            padding: 20px;
-            background-color: #f8f9fa;
-            border-left: 1px solid #e9ecef;
-            overflow-y: auto;
-        }
-        @media (max-width: 1024px) {
-            .content {
-                height: 500px;
-            }
-            .sidebar {
-                width: 280px;
-                padding: 15px;
-            }
-        }
-        @media (max-width: 768px) {
-            body {
-                padding: 10px;
-            }
-            .container {
-                border-radius: 5px;
-            }
-            .content {
-                flex-direction: column;
-                height: auto;
-                min-height: 600px;
-            }
-            #map {
-                height: 400px;
-                min-height: 300px;
-            }
-            .sidebar {
-                width: 100%;
-                border-left: none;
-                border-top: 1px solid #e9ecef;
-                max-height: 300px;
-            }
-            .controls {
-                padding: 10px 15px;
-                gap: 8px;
-            }
-            .btn {
-                padding: 6px 12px;
-                font-size: 12px;
-            }
-            .mode-indicator {
-                width: 100%;
-                margin-left: 0;
-                margin-top: 10px;
-                font-size: 12px;
-            }
-            .user-info-bar {
-                padding: 8px 15px;
-                font-size: 12px;
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 10px;
-            }
-            .edit-info-btn {
-                padding: 4px 12px;
-                font-size: 11px;
-            }
-        }
-        @media (max-width: 480px) {
-            body {
-                padding: 8px;
-            }
-            #map {
-                height: 350px;
-            }
-            .sidebar {
-                max-height: 250px;
-                padding: 12px;
-            }
-            .controls {
-                padding: 8px 10px;
-                gap: 5px;
-            }
-            .btn {
-                padding: 5px 8px;
-                font-size: 11px;
-                flex: 1;
-                min-width: 60px;
-            }
-            .mode-indicator {
-                display: none;
-            }
-            .user-info-bar {
-                padding: 6px 10px;
-                font-size: 11px;
-            }
-            .user-info-item {
-                margin-right: 10px;
-            }
-        }
-        .vector-item {
-            background: white;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .vector-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        .vector-title {
-            font-weight: bold;
-            color: #333;
-            flex: 1;
-        }
-        .delete-btn {
-            background: #dc3545;
+        
+        .primary-btn {
+            width: 100%;
+            padding: 18px;
+            background: #E4351A;
             color: white;
             border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-        .delete-btn:hover {
-            background: #c82333;
-        }
-        .vector-info {
-            font-size: 12px;
-            color: #666;
-            margin-top: 5px;
-        }
-        .transport-badge {
-            display: inline-block;
-            padding: 3px 8px;
             border-radius: 12px;
-            font-size: 11px;
+            font-size: 16px;
             font-weight: 600;
-            margin-left: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
         }
-        .transport-walking { background: #d4edda; color: #155724; }
-        .transport-biking { background: #fff3cd; color: #856404; }
-        .transport-driving { background: #f8d7da; color: #721c24; }
-        .transport-transit { background: #d1ecf1; color: #0c5460; }
-        .transport-other { background: #e2e3e5; color: #383d41; }
-        .stats {
-            background: white;
-            padding: 15px;
+        
+        .primary-btn:hover {
+            background: #c72e16;
+        }
+        
+        .primary-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        /* Error Message */
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px 16px;
             border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #e9ecef;
-        }
-        .stat-item {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
+            margin-top: 12px;
             font-size: 14px;
-        }
-        .stat-label {
-            color: #666;
-        }
-        .stat-value {
-            font-weight: bold;
-            color: #333;
-        }
-        .instructions {
-            background: #e7f3ff;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-            color: #0c5460;
-        }
-        .transport-selector {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: white;
-            padding: 15px 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 1000;
             display: none;
-            min-width: 400px;
+            border-left: 4px solid #c33;
+        }
+        
+        .error-message.show {
+            display: block;
+        }
+        
+        .success-message {
+            background: #efe;
+            color: #3c3;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 12px;
+            font-size: 14px;
+            display: none;
+            border-left: 4px solid #3c3;
+        }
+        
+        .success-message.show {
+            display: block;
+        }
+        
+        /* Transport Selector Modal */
+        .transport-modal {
+            background: white;
+            border-radius: 24px;
+            padding: 32px;
+            width: 500px;
+            max-width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             max-height: 90vh;
             overflow-y: auto;
         }
-        .transport-selector.active {
-            display: block;
-        }
-        .transport-selector h3 {
-            margin: 0 0 10px 0;
-            font-size: 16px;
-            color: #333;
-        }
-        .transport-selector-content {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        .transport-selector select {
-            flex: 1;
-            padding: 8px;
-            border: 2px solid #667eea;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        .transport-selector button {
-            padding: 8px 16px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: 500;
-        }
-        .transport-selector button:hover {
-            background: #5a6fd8;
-        }
-        .segment-info {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 8px;
-        }
-        .time-input-group {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #e9ecef;
-        }
-        .time-input-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #333;
-            font-size: 14px;
-        }
-        .time-inputs {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        .time-input {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        .time-input input {
-            width: 100%;
-            padding: 8px;
-            border: 2px solid #e9ecef;
-            border-radius: 5px;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        .time-input input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .time-input span {
-            font-size: 11px;
-            color: #666;
+        
+        .transport-modal h2 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 24px;
             text-align: center;
         }
-        .time-badge {
-            display: inline-block;
-            padding: 2px 6px;
-            background: #e7f3ff;
-            color: #0c5460;
-            border-radius: 8px;
-            font-size: 10px;
-            font-weight: 600;
-            margin-left: 5px;
+        
+        .transport-options {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
         }
-        /* Non-blocking stop prompt panel */
-        .stop-prompt {
-            position: fixed;
-            right: 20px;
-            bottom: 20px;
-            z-index: 1000;
+        
+        .transport-option {
+            aspect-ratio: 1;
+            border: 2px solid #e0e0e0;
+            border-radius: 16px;
             background: white;
-            border: 1px solid #e9ecef;
-            border-radius: 10px;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-            padding: 16px;
-            width: 320px;
-            display: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            transition: all 0.2s;
         }
-        .stop-prompt.active { display: block; }
-        .stop-prompt h4 { margin: 0 0 8px 0; color: #333; font-size: 16px; }
-        .stop-prompt p { margin: 0; color: #666; font-size: 13px; }
-        .stop-prompt .actions { display: flex; gap: 8px; margin-top: 12px; }
-        .stop-prompt .btn-primary { padding: 12px 18px; font-size: 16px; }
+        
+        .transport-option:hover {
+            border-color: #E4351A;
+            background: #fff5f3;
+        }
+        
+        .transport-option.active {
+            border-color: #E4351A;
+            background: #E4351A;
+            color: white;
+        }
+        
+        .duration-section {
+            margin: 24px 0;
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .duration-inputs {
+            display: flex;
+            gap: 16px;
+        }
+        
+        .duration-input {
+            flex: 1;
+            padding: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        .duration-input:focus {
+            outline: none;
+            border-color: #E4351A;
+        }
+        
+        .rating-section {
+            margin: 24px 0;
+        }
+        
         .star-rating {
             display: flex;
-            gap: 5px;
-            font-size: 28px;
+            gap: 8px;
+            justify-content: center;
         }
+        
         .star {
-            cursor: pointer;
+            font-size: 40px;
             color: #ddd;
+            cursor: pointer;
             transition: color 0.2s;
         }
+        
         .star:hover,
         .star.active {
-            color: #ffc107;
+            color: #FFC107;
+        }
+        
+        /* Help Modal */
+        .help-modal {
+            background: white;
+            border-radius: 24px;
+            padding: 48px;
+            max-width: 700px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .help-title {
+            background: #E4351A;
+            color: white;
+            padding: 12px 32px;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 32px;
+            display: inline-block;
+        }
+        
+        .help-content {
+            font-size: 18px;
+            line-height: 1.8;
+        }
+        
+        .help-content ol {
+            padding-left: 24px;
+        }
+        
+        .help-content li {
+            margin-bottom: 12px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: calc(100% - 40px);
+                max-height: 50vh;
+            }
+            
+            .transport-options {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .header-nav {
+                gap: 16px;
+            }
+            
+            .nav-btn {
+                font-size: 14px;
+            }
         }
     </style>
 </head>
 <body>
-    <div id="userInfoModal" class="modal-overlay active">
-        <div class="modal">
-            <h2>Welcome! Please provide your information</h2>
-            <form id="userInfoForm">
-                <div class="form-group">
-                    <label for="fullName">Full name:</label>
-                    <input type="text" id="fullName" placeholder="e.g., Jane Doe" required>
+    <!-- Welcome Modal -->
+    <div id="welcomeModal" class="modal-overlay active">
+        <div class="welcome-modal">
+            <h1 class="welcome-title">Welcome</h1>
+            <p class="welcome-subtitle">Tell us about yourself</p>
+            
+            <div class="form-section">
+                <label class="form-label">I am a:</label>
+                <div class="button-group">
+                    <button class="option-btn" data-value="student">Student</button>
+                    <button class="option-btn" data-value="faculty">Staff/Faculty</button>
+                    <button class="option-btn" data-value="visitor">Visitor</button>
+                    <button class="option-btn" data-value="other">Other</button>
                 </div>
-                <div class="form-group">
-                    <label for="userType">I am a:</label>
-                    <select id="userType" required>
-                        <option value="">-- Select --</option>
-                        <option value="student">Student</option>
-                        <option value="faculty">Faculty</option>
-                        <option value="staff">Staff</option>
-                        <option value="visitor">Visitor</option>
-                    </select>
-                </div>
-                <div class="form-group" id="gradeLevelGroup" style="display: none;">
-                    <label for="gradeLevel">Grade Level:</label>
-                    <select id="gradeLevel">
-                        <option value="">-- Select --</option>
-                        <option value="freshman">Freshman</option>
-                        <option value="sophomore">Sophomore</option>
-                        <option value="junior">Junior</option>
-                        <option value="senior">Senior</option>
-                        <option value="graduate">Graduate Student</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="department">Department/School (Optional):</label>
-                    <input type="text" id="department" placeholder="e.g., Engineering, Business">
-                </div>
-                <div class="modal-buttons">
-                    <button type="submit" class="btn btn-primary btn-block">Start Mapping</button>
-                </div>
-            </form>
+            </div>
+            
+            <div class="form-section" id="gradeLevelSection" style="display: none;">
+                <label class="form-label">Grade Level:</label>
+                <input type="text" class="text-input" id="gradeLevel" placeholder="e.g. Freshman, Sophomore">
+            </div>
+            
+            <div class="form-section">
+                <label class="form-label">Department/School (Optional):</label>
+                <input type="text" class="text-input" id="department" placeholder="e.g. Engineering, Business">
+            </div>
+            
+            <div class="error-message" id="welcomeError"></div>
+            
+            <button class="primary-btn" id="startBtn" disabled>How to Draw:</button>
         </div>
     </div>
 
-    <div class="container">
-        <div class="user-info-bar">
-            <div style="display: flex; flex-wrap: wrap;">
-                <div class="user-info-item" id="displayFullNameContainer">
-                    <span class="user-info-label">Name:</span> <span id="displayFullName">-</span>
+    <!-- Transport Selector Modal -->
+    <div id="transportModal" class="modal-overlay">
+        <div class="transport-modal">
+            <h2>Select Mode of Transport</h2>
+            
+            <div class="transport-options">
+                <div class="transport-option" data-mode="driving">
+                    <i class="fas fa-car"></i>
                 </div>
-                <div class="user-info-item">
-                    <span class="user-info-label">Type:</span> <span id="displayUserType">-</span>
+                <div class="transport-option" data-mode="transit">
+                    <i class="fas fa-bus"></i>
                 </div>
-                <div class="user-info-item" id="displayGradeLevelContainer" style="display: none;">
-                    <span class="user-info-label">Grade:</span> <span id="displayGradeLevel">-</span>
+                <div class="transport-option active" data-mode="biking">
+                    <i class="fas fa-bicycle"></i>
                 </div>
-                <div class="user-info-item" id="displayDepartmentContainer" style="display: none;">
-                    <span class="user-info-label">Department:</span> <span id="displayDepartment">-</span>
-                </div>
-            </div>
-            <button class="edit-info-btn" onclick="editUserInfo()">Edit Info</button>
-        </div>
-        
-        <div class="controls">
-            <button id="drawBtn" class="btn btn-primary">Start Drawing</button>
-            <button id="finishBtn" class="btn btn-secondary" disabled>Finish Line</button>
-            <button id="cancelBtn" class="btn btn-secondary" disabled>Cancel</button>
-            <button id="clearBtn" class="btn btn-danger">Clear All</button>
-            <button id="saveBtn" class="btn btn-primary">Save to Server</button>
-            <button id="exportExcelBtn" class="btn btn-secondary">Download Excel</button>
-            <div id="modeIndicator" class="mode-indicator">Click "Start Drawing" to begin</div>
-        </div>
-        
-        <div class="content">
-            <div id="map"></div>
-            <div class="sidebar">
-                <div class="instructions">
-                    <strong>How to map your walk:</strong><br>
-                    1. Click "Start Drawing"<br>
-                    2. Click points on the map<br>
-                    3. For each point, choose if you stopped or just passed through<br>
-                    4. If you stopped: rate and time your experience<br>
-                    5. Double-click or click "Finish Line" to complete<br>
-                    6. Click "Save to Server"
-                </div>
-                
-                <div class="stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Total Routes:</span>
-                        <span class="stat-value" id="vectorCount">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Total Segments:</span>
-                        <span class="stat-value" id="segmentCount">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Total Distance:</span>
-                        <span class="stat-value" id="totalLength">0.00 km</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Current Points:</span>
-                        <span class="stat-value" id="currentPoints">0</span>
-                    </div>
-                </div>
-                
-                <div id="vectorList"></div>
-            </div>
-        </div>
-        
-        <div id="stopPrompt" class="stop-prompt">
-            <h4>Did you stop at the last point?</h4>
-            <p>You can keep clicking to continue mapping. Only answer if you stopped.</p>
-            <div class="actions">
-                <button id="yesStopBtn" class="btn btn-primary" style="flex:1;">Yes, I stopped</button>
-                <button id="noStopBtn" class="btn btn-secondary" style="flex:1;">No, continue</button>
-            </div>
-        </div>
-
-        <div id="transportSelector" class="transport-selector">
-            <h3>Tell us about this segment</h3>
-            <div class="segment-info" id="segmentInfo"></div>
-            <div class="transport-selector-content">
-                <select id="currentTransportMode">
-                    <option value="walking">Walking</option>
-                    <option value="biking">Biking</option>
-                    <option value="driving">Driving</option>
-                    <option value="transit">Public Transit</option>
-                    <option value="other">Other</option>
-                </select>
-            </div>
-            <div class="time-input-group">
-                <label>How long did you spend at this point?</label>
-                <div class="time-inputs">
-                    <div class="time-input">
-                        <input type="number" id="segmentMinutes" min="0" max="999" value="0" placeholder="0">
-                        <span>Minutes</span>
-                    </div>
-                    <div class="time-input">
-                        <input type="number" id="segmentSeconds" min="0" max="59" value="0" placeholder="0">
-                        <span>Seconds</span>
-                    </div>
+                <div class="transport-option" data-mode="walking">
+                    <i class="fas fa-person-walking"></i>
                 </div>
             </div>
-            <div class="time-input-group">
-                <label>How would you rate this location? (1-5 stars)</label>
+            
+            <div class="duration-section">
+                <div class="section-title">Duration</div>
+                <div class="duration-inputs">
+                    <input type="number" class="duration-input" id="hours" placeholder="Hours" min="0">
+                    <input type="number" class="duration-input" id="minutes" placeholder="Minutes" min="0">
+                </div>
+            </div>
+            
+            <div class="rating-section">
+                <div class="section-title">Rating</div>
                 <div class="star-rating" id="starRating">
-                    <span class="star" data-value="1">★</span>
-                    <span class="star" data-value="2">★</span>
+                    <span class="star active" data-value="1">★</span>
+                    <span class="star active" data-value="2">★</span>
                     <span class="star" data-value="3">★</span>
                     <span class="star" data-value="4">★</span>
                     <span class="star" data-value="5">★</span>
                 </div>
             </div>
-            <div style="margin-top: 15px;">
-                <button id="confirmSegmentBtn" style="width: 100%;">Confirm Segment</button>
+            
+            <div class="error-message" id="transportError"></div>
+            
+            <button class="primary-btn" id="confirmTransport">Confirm</button>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="modal-overlay">
+        <div class="help-modal">
+            <div class="help-title">How to Draw:</div>
+            <div class="help-content">
+                <ol>
+                    <li>Click the Start Drawing Button.</li>
+                    <li>Click your points on map.</li>
+                    <li>Select your mode of transport for each segment.</li>
+                    <li>Click Finish Line (or double-click) to complete.</li>
+                    <li>Click Save when done to save to server.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">H</div>
+        <div class="header-nav">
+            <button class="nav-btn" id="cancelNav">Cancel</button>
+            <button class="nav-btn active" id="startDrawingNav">Start Drawing</button>
+            <button class="nav-btn" id="saveNav">Save to Server</button>
+            <button class="nav-btn" id="clearNav">Clear All</button>
+            <button class="nav-btn" id="finishNav">Finish Line</button>
+        </div>
+        <button class="nav-btn help-btn" id="helpNav">Help</button>
+    </div>
+
+    <!-- Map Container -->
+    <div class="map-container">
+        <div id="map"></div>
+        
+        <!-- Search Bar -->
+        <div class="search-bar">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="Search stopping points">
+        </div>
+        
+        <!-- Add Stop Button -->
+        <button class="add-stop-btn" id="addStopBtn">
+            <i class="fas fa-plus"></i>
+            Add stop
+        </button>
+        
+        <!-- Current Path Sidebar -->
+        <div class="sidebar" id="pathSidebar">
+            <div class="sidebar-header">
+                <div>
+                    <div class="sidebar-title">Current Path</div>
+                    <div class="sidebar-date" id="pathDate">10/22/2025</div>
+                </div>
+                <button class="edit-btn" id="editSegmentsBtn">
+                    <i class="fas fa-pen"></i>
+                </button>
+            </div>
+            <div class="sidebar-content" id="segmentList">
+                <!-- Segments will be added here dynamically -->
             </div>
         </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script>
+        // Initialize map with image overlay
         const imageBounds = [[0, 0], [1536, 2048]];
-
-const map = L.map('map', {
-    crs: L.CRS.Simple,
-    minZoom: -2,
-    maxZoom: 2,
-    zoomControl: false,
-    attributionControl: false
-});
-
-const imageUrl = '/static/campus-map.jpg';
-const imageOverlay = L.imageOverlay(imageUrl, imageBounds).addTo(map);
-
-map.fitBounds(imageOverlay.getBounds());
+        const map = L.map('map', {
+            crs: L.CRS.Simple,
+            minZoom: -2,
+            maxZoom: 2,
+            zoomControl: false,
+            attributionControl: false
+        });
         
+        const imageUrl = '/static/campus-map.jpg';
+        const imageOverlay = L.imageOverlay(imageUrl, imageBounds).addTo(map);
+        map.fitBounds(imageOverlay.getBounds());
+        
+        // State
         let userData = {
-            fullName: '',
             userType: '',
             gradeLevel: '',
             department: ''
         };
-        
         let isDrawing = false;
         let currentPoints = [];
         let currentSegments = [];
-        let pendingSegment = null;
-        let editableSegmentIndex = -1; // index of the last auto-added segment that can be edited as a stop
         let currentPolylines = [];
-        let tempLine = null;
         let vectors = new Map();
         let vectorCounter = 0;
         let selectedRating = 0;
-        let drawingMode = 'detailed'; // 'detailed' or 'passing'
+        let selectedTransport = 'biking';
+        let editMode = false;
+        let editingSegmentIndex = -1;
         
-        const drawBtn = document.getElementById('drawBtn');
-        const finishBtn = document.getElementById('finishBtn');
-        const cancelBtn = document.getElementById('cancelBtn');
-        const clearBtn = document.getElementById('clearBtn');
-        const saveBtn = document.getElementById('saveBtn');
-        const exportExcelBtn = document.getElementById('exportExcelBtn');
-        const modeIndicator = document.getElementById('modeIndicator');
-        const mapElement = document.getElementById('map');
-        const userInfoModal = document.getElementById('userInfoModal');
-        const transportSelector = document.getElementById('transportSelector');
-        const currentTransportModeSelect = document.getElementById('currentTransportMode');
-        const confirmSegmentBtn = document.getElementById('confirmSegmentBtn');
-        const segmentInfo = document.getElementById('segmentInfo');
-        const segmentMinutesInput = document.getElementById('segmentMinutes');
-        const segmentSecondsInput = document.getElementById('segmentSeconds');
-        const starRating = document.getElementById('starRating');
-        const stopPrompt = document.getElementById('stopPrompt');
-        const yesStopBtn = document.getElementById('yesStopBtn');
-        const noStopBtn = document.getElementById('noStopBtn');
+        // Utility function to show error messages
+        function showError(elementId, message, duration = 4000) {
+            const errorEl = document.getElementById(elementId);
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+            setTimeout(() => {
+                errorEl.classList.remove('show');
+            }, duration);
+        }
         
-        starRating.addEventListener('click', function(e) {
-            if (e.target.classList.contains('star')) {
-                selectedRating = parseInt(e.target.dataset.value);
-                document.querySelectorAll('.star').forEach((star, idx) => {
-                    if (idx < selectedRating) {
-                        star.classList.add('active');
-                    } else {
-                        star.classList.remove('active');
-                    }
-                });
-            }
-        });
-        
-        yesStopBtn.addEventListener('click', function() {
-            stopPrompt.classList.remove('active');
-            // Convert the last passing segment into a stopping segment by opening the selector
-            if (editableSegmentIndex >= 0 && editableSegmentIndex < currentSegments.length) {
-                const seg = currentSegments[editableSegmentIndex];
-                const distance = calculateDistance(seg.start, seg.end);
-                segmentInfo.textContent = `Segment ${editableSegmentIndex + 1}: ${distance.toFixed(3)} km`;
-                transportSelector.classList.add('active');
-                currentTransportModeSelect.value = seg.transportMode || 'walking';
-                segmentMinutesInput.value = String(Math.floor((seg.durationSeconds || 0) / 60));
-                segmentSecondsInput.value = String((seg.durationSeconds || 0) % 60);
-                selectedRating = seg.experienceRating || 0;
-                document.querySelectorAll('.star').forEach((s, idx) => {
-                    if (idx < selectedRating) s.classList.add('active'); else s.classList.remove('active');
-                });
-                segmentMinutesInput.focus();
-            }
-        });
-        
-        noStopBtn.addEventListener('click', function() {
-            // Simply hide prompt; user keeps mapping
-            stopPrompt.classList.remove('active');
-        });
-        
-        confirmSegmentBtn.addEventListener('click', function() {
-            const transportMode = currentTransportModeSelect.value;
-            const minutes = parseInt(segmentMinutesInput.value) || 0;
-            const seconds = parseInt(segmentSecondsInput.value) || 0;
-            const totalSeconds = minutes * 60 + seconds;
+        function showSuccess(message, duration = 3000) {
+            const toast = document.createElement('div');
+            toast.className = 'success-message show';
+            toast.textContent = message;
+            toast.style.position = 'fixed';
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.zIndex = '10000';
+            toast.style.minWidth = '300px';
+            document.body.appendChild(toast);
             
-            if (selectedRating === 0) {
-                alert('Please select a star rating (1-5)');
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+        
+        // Elements
+        const welcomeModal = document.getElementById('welcomeModal');
+        const transportModal = document.getElementById('transportModal');
+        const helpModal = document.getElementById('helpModal');
+        const pathSidebar = document.getElementById('pathSidebar');
+        const segmentList = document.getElementById('segmentList');
+        const addStopBtn = document.getElementById('addStopBtn');
+        const editSegmentsBtn = document.getElementById('editSegmentsBtn');
+        
+        // Edit Segments Button
+        editSegmentsBtn.addEventListener('click', () => {
+            if (currentSegments.length === 0) {
+                showError('transportError', 'No segments to edit. Start drawing first!');
                 return;
             }
             
-            // Apply edits to existing segment
-            if (editableSegmentIndex >= 0 && editableSegmentIndex < currentSegments.length) {
-                currentSegments[editableSegmentIndex].transportMode = transportMode;
-                currentSegments[editableSegmentIndex].durationSeconds = totalSeconds;
-                currentSegments[editableSegmentIndex].experienceRating = selectedRating;
-            }
-            
-            segmentMinutesInput.value = '0';
-            segmentSecondsInput.value = '0';
-            selectedRating = 0;
-            document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
-            
-            transportSelector.classList.remove('active');
-            redrawCurrentSegments();
-            updateUI();
-        });
-        
-        document.getElementById('userType').addEventListener('change', function() {
-            const gradeLevelGroup = document.getElementById('gradeLevelGroup');
-            if (this.value === 'student') {
-                gradeLevelGroup.style.display = 'block';
-                document.getElementById('gradeLevel').required = true;
+            editMode = !editMode;
+            if (editMode) {
+                editSegmentsBtn.style.color = '#E4351A';
+                editSegmentsBtn.style.opacity = '1';
+                showSuccess('Edit mode active - Click any segment to edit it');
             } else {
-                gradeLevelGroup.style.display = 'none';
-                document.getElementById('gradeLevel').required = false;
+                editSegmentsBtn.style.color = '';
+                editSegmentsBtn.style.opacity = '';
+                editingSegmentIndex = -1;
+                updateSidebar();
             }
         });
         
-        document.getElementById('userInfoForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            userData.fullName = document.getElementById('fullName').value;
-            userData.userType = document.getElementById('userType').value;
+        // Welcome Modal - User Type Selection
+        document.querySelectorAll('.welcome-modal .option-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.welcome-modal .option-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                userData.userType = this.dataset.value;
+                
+                const gradeLevelSection = document.getElementById('gradeLevelSection');
+                if (userData.userType === 'student') {
+                    gradeLevelSection.style.display = 'block';
+                } else {
+                    gradeLevelSection.style.display = 'none';
+                }
+                
+                document.getElementById('startBtn').disabled = false;
+            });
+        });
+        
+        document.getElementById('startBtn').addEventListener('click', () => {
             userData.gradeLevel = document.getElementById('gradeLevel').value;
             userData.department = document.getElementById('department').value;
             
-            updateUserInfoDisplay();
-            userInfoModal.classList.remove('active');
+            // Validate student must have grade level
+            if (userData.userType === 'student' && !userData.gradeLevel.trim()) {
+                showError('welcomeError', 'Students must enter a grade level');
+                return;
+            }
+            
+            welcomeModal.classList.remove('active');
+            helpModal.classList.add('active');
         });
         
-        function updateUserInfoDisplay() {
-            const userTypeMap = {
-                'student': 'Student',
-                'faculty': 'Faculty',
-                'staff': 'Staff',
-                'visitor': 'Visitor'
-            };
-            
-            const gradeLevelMap = {
-                'freshman': 'Freshman',
-                'sophomore': 'Sophomore',
-                'junior': 'Junior',
-                'senior': 'Senior',
-                'graduate': 'Graduate'
-            };
-            
-            document.getElementById('displayFullName').textContent = userData.fullName || '-';
-            document.getElementById('displayUserType').textContent = userTypeMap[userData.userType] || '-';
-            
-            const gradeLevelContainer = document.getElementById('displayGradeLevelContainer');
-            const gradeLevelDisplay = document.getElementById('displayGradeLevel');
-            if (userData.gradeLevel) {
-                gradeLevelContainer.style.display = 'block';
-                gradeLevelDisplay.textContent = gradeLevelMap[userData.gradeLevel] || userData.gradeLevel;
+        // Help Modal - Close on click
+        helpModal.addEventListener('click', (e) => {
+            if (e.target === helpModal) {
+                helpModal.classList.remove('active');
+            }
+        });
+        
+        document.getElementById('helpNav').addEventListener('click', () => {
+            helpModal.classList.add('active');
+        });
+        
+        // Transport Modal - Transport Selection
+        document.querySelectorAll('.transport-option').forEach(option => {
+            option.addEventListener('click', function() {
+                document.querySelectorAll('.transport-option').forEach(o => o.classList.remove('active'));
+                this.classList.add('active');
+                selectedTransport = this.dataset.mode;
+            });
+        });
+        
+        // Star Rating
+        document.querySelectorAll('.star').forEach(star => {
+            star.addEventListener('click', function() {
+                selectedRating = parseInt(this.dataset.value);
+                document.querySelectorAll('.star').forEach((s, idx) => {
+                    if (idx < selectedRating) {
+                        s.classList.add('active');
+                    } else {
+                        s.classList.remove('active');
+                    }
+                });
+            });
+        });
+        
+        // Navigation
+        document.getElementById('startDrawingNav').addEventListener('click', () => {
+            isDrawing = !isDrawing;
+            if (isDrawing) {
+                addStopBtn.classList.add('active');
+                pathSidebar.classList.add('active');
+                document.getElementById('startDrawingNav').textContent = 'Stop Drawing';
             } else {
-                gradeLevelContainer.style.display = 'none';
+                addStopBtn.classList.remove('active');
+                document.getElementById('startDrawingNav').textContent = 'Start Drawing';
+            }
+        });
+        
+        document.getElementById('finishNav').addEventListener('click', () => {
+            if (currentSegments.length > 0) {
+                finishRoute();
+            }
+        });
+        
+        document.getElementById('clearNav').addEventListener('click', () => {
+            if (confirm('Clear all routes?')) {
+                currentPoints = [];
+                currentSegments = [];
+                currentPolylines.forEach(p => map.removeLayer(p));
+                currentPolylines = [];
+                segmentList.innerHTML = '';
+                pathSidebar.classList.remove('active');
+            }
+        });
+        
+        document.getElementById('cancelNav').addEventListener('click', () => {
+            currentPoints = [];
+            currentSegments = [];
+            currentPolylines.forEach(p => map.removeLayer(p));
+            currentPolylines = [];
+            segmentList.innerHTML = '';
+            isDrawing = false;
+            addStopBtn.classList.remove('active');
+            pathSidebar.classList.remove('active');
+            document.getElementById('startDrawingNav').textContent = 'Start Drawing';
+        });
+        
+        // Map Click Handler
+        map.on('click', function(e) {
+            if (!isDrawing) {
+                showError('transportError', 'Click "Start Drawing" first to begin mapping your route');
+                return;
             }
             
-            const deptContainer = document.getElementById('displayDepartmentContainer');
-            const deptDisplay = document.getElementById('displayDepartment');
-            if (userData.department) {
-                deptContainer.style.display = 'block';
-                deptDisplay.textContent = userData.department;
+            const latlng = [e.latlng.lat, e.latlng.lng];
+            currentPoints.push(latlng);
+            
+            if (currentPoints.length > 1) {
+                transportModal.classList.add('active');
+            }
+            
+            updateMap();
+        });
+        
+        // Confirm Transport
+        document.getElementById('confirmTransport').addEventListener('click', () => {
+            const hours = parseInt(document.getElementById('hours').value) || 0;
+            const minutes = parseInt(document.getElementById('minutes').value) || 0;
+            const durationSeconds = (hours * 3600) + (minutes * 60);
+            
+            // Validation
+            if (selectedRating === 0) {
+                showError('transportError', 'Please select a star rating (1-5 stars)');
+                return;
+            }
+            
+            if (hours === 0 && minutes === 0) {
+                showError('transportError', 'Please enter a duration (time spent at this location)');
+                return;
+            }
+            
+            if (editingSegmentIndex >= 0) {
+                // Edit existing segment
+                currentSegments[editingSegmentIndex].transportMode = selectedTransport;
+                currentSegments[editingSegmentIndex].durationSeconds = durationSeconds;
+                currentSegments[editingSegmentIndex].experienceRating = selectedRating;
+                editingSegmentIndex = -1;
+                editMode = false;
+                editSegmentsBtn.style.color = '';
+                editSegmentsBtn.style.opacity = '';
+                showSuccess('Segment updated successfully!');
             } else {
-                deptContainer.style.display = 'none';
-            }
-        }
-        
-        function editUserInfo() {
-            document.getElementById('fullName').value = userData.fullName;
-            document.getElementById('userType').value = userData.userType;
-            document.getElementById('gradeLevel').value = userData.gradeLevel;
-            document.getElementById('department').value = userData.department;
-            
-            if (userData.userType === 'student') {
-                document.getElementById('gradeLevelGroup').style.display = 'block';
+                // Add new segment
+                const segment = {
+                    start: currentPoints[currentPoints.length - 2],
+                    end: currentPoints[currentPoints.length - 1],
+                    transportMode: selectedTransport,
+                    durationSeconds: durationSeconds,
+                    experienceRating: selectedRating
+                };
+                
+                currentSegments.push(segment);
             }
             
-            userInfoModal.classList.add('active');
-        }
-        
-        function calculateDistance(latlng1, latlng2) {
-            return latlng1.distanceTo(latlng2) / 1000;
-        }
-        
-        function formatCoordinate(coord, precision = 6) {
-            return parseFloat(coord).toFixed(precision);
-        }
-        
-        function updateStats() {
-            const vectorCount = vectors.size;
-            let totalLength = 0;
-            let totalSegments = 0;
+            // Reset inputs
+            document.getElementById('hours').value = '';
+            document.getElementById('minutes').value = '';
+            selectedRating = 0;
+            document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
             
-            vectors.forEach(vector => {
-                totalLength += vector.length;
-                totalSegments += vector.segments.length;
+            transportModal.classList.remove('active');
+            updateMap();
+            updateSidebar();
+        });
+        
+        function updateMap() {
+            // Clear existing polylines
+            currentPolylines.forEach(p => map.removeLayer(p));
+            currentPolylines = [];
+            
+            // Draw segments
+            currentSegments.forEach((seg, idx) => {
+                const color = getTransportColor(seg.transportMode);
+                const line = L.polyline([seg.start, seg.end], {
+                    color: color,
+                    weight: 4,
+                    opacity: 0.8
+                }).addTo(map);
+                currentPolylines.push(line);
             });
             
-            document.getElementById('vectorCount').textContent = vectorCount;
-            document.getElementById('segmentCount').textContent = totalSegments;
-            document.getElementById('totalLength').textContent = totalLength.toFixed(2) + ' km';
-            document.getElementById('currentPoints').textContent = currentPoints.length;
-        }
-        
-        function updateUI() {
-        if (isDrawing) {
-                drawBtn.textContent = 'Drawing...';
-                drawBtn.classList.add('active');
-                finishBtn.disabled = currentSegments.length === 0;
-                cancelBtn.disabled = false;
-                
-                modeIndicator.textContent = `Drawing - ${currentPoints.length} points, ${currentSegments.length} segments`;
-                
-                mapElement.classList.remove('normal-cursor');
-            } else {
-                drawBtn.textContent = 'Start Drawing';
-                drawBtn.classList.remove('active');
-                finishBtn.disabled = true;
-                cancelBtn.disabled = true;
-                modeIndicator.textContent = 'Click "Start Drawing" to begin';
-                mapElement.classList.add('normal-cursor');
-                transportSelector.classList.remove('active');
-            }
-            updateStats();
-        }
-        
-        function addVectorToSidebar(id, segments, totalLength) {
-            const vectorList = document.getElementById('vectorList');
-            const vectorItem = document.createElement('div');
-            vectorItem.className = 'vector-item';
-            vectorItem.id = `vector-${id}`;
-            
-            const transportLabels = {
-                'walking': 'Walking',
-                'biking': 'Biking',
-                'driving': 'Driving',
-                'transit': 'Transit',
-                'other': 'Other'
-            };
-            
-            let totalSeconds = 0;
-            segments.forEach(seg => {
-                totalSeconds += seg.durationSeconds || 0;
+            // Draw markers
+            currentPoints.forEach((point, idx) => {
+                const marker = L.marker(point, {
+                    icon: L.divIcon({
+                        className: 'custom-marker',
+                        html: `<div style="width: 32px; height: 32px; background: #E4351A; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">${idx + 1}</div>`,
+                        iconSize: [32, 32]
+                    })
+                }).addTo(map);
+                currentPolylines.push(marker);
             });
-            const totalMinutes = Math.floor(totalSeconds / 60);
-            const remainingSeconds = totalSeconds % 60;
-            const totalTimeStr = totalMinutes > 0 
-                ? `${totalMinutes}m ${remainingSeconds}s` 
-                : `${remainingSeconds}s`;
+        }
+        
+        function updateSidebar() {
+            segmentList.innerHTML = '';
             
-            let segmentHTML = '';
-            segments.forEach((seg, idx) => {
-                const segLength = calculateDistance(seg.start, seg.end);
-                const segMinutes = Math.floor(seg.durationSeconds / 60);
-                const segSeconds = seg.durationSeconds % 60;
-                const segTimeStr = segMinutes > 0 
-                    ? `${segMinutes}m ${segSeconds}s` 
-                    : `${segSeconds}s`;
+            currentSegments.forEach((seg, idx) => {
+                const transportIcons = {
+                    'walking': '<i class="fas fa-person-walking"></i>',
+                    'biking': '<i class="fas fa-bicycle"></i>',
+                    'driving': '<i class="fas fa-car"></i>',
+                    'transit': '<i class="fas fa-bus"></i>',
+                    'other': '<i class="fas fa-walking"></i>'
+                };
                 
-                const isPassingSegment = seg.durationSeconds === 0 && seg.experienceRating === 0;
-                const segmentType = isPassingSegment ? 'Passing' : 'Stopping';
+                const transportNames = {
+                    'walking': 'Walking',
+                    'biking': 'Biking',
+                    'driving': 'Driving',
+                    'transit': 'Transit',
+                    'other': 'Other'
+                };
                 
-                segmentHTML += `
-                    <div style="margin: 5px 0; padding: 5px; background: #f8f9fa; border-radius: 4px;">
-                        <span class="transport-badge transport-${seg.transportMode}" style="font-size: 10px;">${transportLabels[seg.transportMode]}</span>
-                        <span style="font-size: 10px; color: #666; margin-left: 5px; background: #e9ecef; padding: 1px 4px; border-radius: 3px;">${segmentType}</span>
-                        <span style="font-size: 11px; color: #666; margin-left: 5px;">${segLength.toFixed(3)} km</span>
-                        <span class="time-badge">${segTimeStr}</span>
-                        <span class="time-badge" style="background: #fff3cd; color: #856404;">★${seg.experienceRating}</span>
-                        <div style="font-size: 10px; color: #999; margin-top: 2px;">
-                            ${formatCoordinate(seg.start.lat)}, ${formatCoordinate(seg.start.lng)} → 
-                            ${formatCoordinate(seg.end.lat)}, ${formatCoordinate(seg.end.lng)}
+                const hours = Math.floor(seg.durationSeconds / 3600);
+                const minutes = Math.floor((seg.durationSeconds % 3600) / 60);
+                const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                
+                const stars = '★'.repeat(seg.experienceRating);
+                
+                const segmentEl = document.createElement('div');
+                segmentEl.className = 'segment-item';
+                if (editingSegmentIndex === idx) {
+                    segmentEl.classList.add('editing');
+                }
+                segmentEl.innerHTML = `
+                    <div class="segment-number">${idx + 1}</div>
+                    <div class="segment-details">
+                        <div class="segment-transport">
+                            ${transportIcons[seg.transportMode]}
+                            ${transportNames[seg.transportMode]}
+                        </div>
+                        <div class="segment-meta">
+                            <span>${timeStr}</span>
+                            <span class="segment-stars">${stars}</span>
                         </div>
                     </div>
                 `;
+                
+                // Add click handler for editing
+                segmentEl.addEventListener('click', () => {
+                    if (editMode) {
+                        editingSegmentIndex = idx;
+                        
+                        // Pre-fill the modal with current values
+                        selectedTransport = seg.transportMode;
+                        document.querySelectorAll('.transport-option').forEach(opt => {
+                            if (opt.dataset.mode === selectedTransport) {
+                                opt.classList.add('active');
+                            } else {
+                                opt.classList.remove('active');
+                            }
+                        });
+                        
+                        const hours = Math.floor(seg.durationSeconds / 3600);
+                        const minutes = Math.floor((seg.durationSeconds % 3600) / 60);
+                        document.getElementById('hours').value = hours;
+                        document.getElementById('minutes').value = minutes;
+                        
+                        selectedRating = seg.experienceRating;
+                        document.querySelectorAll('.star').forEach((s, i) => {
+                            if (i < selectedRating) {
+                                s.classList.add('active');
+                            } else {
+                                s.classList.remove('active');
+                            }
+                        });
+                        
+                        transportModal.classList.add('active');
+                        updateSidebar(); // Refresh to show editing state
+                    }
+                });
+                
+                segmentList.appendChild(segmentEl);
             });
             
-            vectorItem.innerHTML = `
-                <div class="vector-header">
-                    <div class="vector-title">Route #${id}</div>
-                    <button class="delete-btn" onclick="deleteVector(${id})">Delete</button>
-                </div>
-                <div class="vector-info">Total: ${totalLength.toFixed(3)} km | ${segments.length} segments | ${totalTimeStr}</div>
-                ${segmentHTML}
-            `;
-            
-            vectorList.insertBefore(vectorItem, vectorList.firstChild);
-        }
-        
-        function startDrawing() {
-            isDrawing = true;
-            currentPoints = [];
-            currentSegments = [];
-            pendingSegment = null;
-            currentTransportModeSelect.value = 'walking';
-            updateUI();
+            // Update date
+            const today = new Date();
+            document.getElementById('pathDate').textContent = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`;
         }
         
         function getTransportColor(mode) {
-            const transportColors = {
+            const colors = {
                 'walking': '#28a745',
                 'biking': '#ffc107',
                 'driving': '#dc3545',
                 'transit': '#17a2b8',
                 'other': '#6c757d'
             };
-            return transportColors[mode] || '#667eea';
+            return colors[mode] || '#667eea';
         }
         
-        function redrawCurrentSegments() {
-            currentPolylines.forEach(polyline => map.removeLayer(polyline));
+        function finishRoute() {
+            if (currentSegments.length === 0) {
+                showError('transportError', 'No route to save. Draw at least one segment first!');
+                return;
+            }
+            
+            vectorCounter++;
+            
+            // Save to backend
+            saveRouteToBackend(vectorCounter, currentSegments);
+            
+            // Reset
+            currentPoints = [];
+            currentSegments = [];
+            currentPolylines.forEach(p => map.removeLayer(p));
             currentPolylines = [];
+            segmentList.innerHTML = '';
+            isDrawing = false;
+            addStopBtn.classList.remove('active');
+            document.getElementById('startDrawingNav').textContent = 'Start Drawing';
             
-            if (currentPoints.length === 0) return;
-            
-            if (currentPoints.length >= 1) {
-                const marker = L.circleMarker(currentPoints[0], {
-                    radius: 4,
-                    fillColor: '#667eea',
-                    color: '#667eea',
-                    weight: 2,
-                    fillOpacity: 0.8
-                }).addTo(map);
-                currentPolylines.push(marker);
-            }
-            
-            for (let i = 0; i < currentSegments.length; i++) {
-                const segment = currentSegments[i];
-                
-                const polyline = L.polyline([segment.start, segment.end], {
-                    color: getTransportColor(segment.transportMode),
-                    weight: 3,
-                    opacity: 0.6,
-                    dashArray: '10, 5'
-                }).addTo(map);
-                
-                currentPolylines.push(polyline);
-            }
-            
-            if (pendingSegment) {
-                const polyline = L.polyline([pendingSegment.start, pendingSegment.end], {
-                    color: '#999999',
-                    weight: 3,
-                    opacity: 0.4,
-                    dashArray: '10, 5'
-                }).addTo(map);
-                
-                currentPolylines.push(polyline);
-            }
+            showSuccess('Route saved successfully! 🎉');
         }
         
-        async function saveRouteToCSV(routeId, segments) {
+        async function saveRouteToBackend(routeId, segments) {
             try {
                 const response = await fetch('/api/save-csv', {
                     method: 'POST',
@@ -1211,8 +1241,8 @@ map.fitBounds(imageOverlay.getBounds());
                     body: JSON.stringify({
                         routeId: routeId,
                         segments: segments.map(seg => ({
-                            start: {lat: seg.start.lat, lng: seg.start.lng},
-                            end: {lat: seg.end.lat, lng: seg.end.lng},
+                            start: {lat: seg.start[0], lng: seg.start[1]},
+                            end: {lat: seg.end[0], lng: seg.end[1]},
                             transportMode: seg.transportMode,
                             durationSeconds: seg.durationSeconds,
                             experienceRating: seg.experienceRating
@@ -1223,220 +1253,44 @@ map.fitBounds(imageOverlay.getBounds());
                 
                 const result = await response.json();
                 if (!result.success) {
-                    console.error('Error saving to CSV:', result.error);
+                    showError('transportError', 'Failed to save route: ' + (result.error || 'Unknown error'));
+                    console.error('Error saving:', result.error);
                 }
             } catch (error) {
-                console.error('Error saving to CSV:', error);
+                showError('transportError', 'Network error - could not save route. Please check your connection.');
+                console.error('Error saving:', error);
             }
         }
         
-        function finishDrawing() {
-            if (currentSegments.length === 0) return;
-            
-            if (pendingSegment) {
-                alert('Please confirm the transportation mode and rating for the current segment before finishing.');
+        document.getElementById('saveNav').addEventListener('click', async () => {
+            if (currentSegments.length === 0) {
+                showError('transportError', 'No route to save. Draw some segments first!');
                 return;
             }
             
-            vectorCounter++;
-            
-            const finalSegments = [...currentSegments];
-            
-            let totalLength = 0;
-            finalSegments.forEach(seg => {
-                totalLength += calculateDistance(seg.start, seg.end);
-            });
-            
-            currentPolylines.forEach(polyline => map.removeLayer(polyline));
-            currentPolylines = [];
-            
-            const finalLayers = [];
-            finalSegments.forEach(seg => {
-                const polyline = L.polyline([seg.start, seg.end], {
-                    color: getTransportColor(seg.transportMode),
-                    weight: 3,
-                    opacity: 0.8
-                }).addTo(map);
-                
-                const transportLabels = {
-                    'walking': 'Walking',
-                    'biking': 'Biking',
-                    'driving': 'Driving',
-                    'transit': 'Transit',
-                    'other': 'Other'
-                };
-                
-                polyline.bindPopup(`
-                    <div style="text-align: center;">
-                        <strong>Route #${vectorCounter}</strong><br>
-                        ${transportLabels[seg.transportMode]}<br>
-                        ${calculateDistance(seg.start, seg.end).toFixed(3)} km<br>
-                        ★ ${seg.experienceRating}/5
-                    </div>
-                `);
-                
-                finalLayers.push(polyline);
-            });
-            
-            vectors.set(vectorCounter, {
-                layers: finalLayers,
-                segments: finalSegments,
-                length: totalLength,
-                userData: {...userData}
-            });
-            
-            addVectorToSidebar(vectorCounter, finalSegments, totalLength);
-            saveRouteToCSV(vectorCounter, finalSegments);
-            
-            cancelDrawing();
-        }
+            finishRoute();
+        });
         
-        function cancelDrawing() {
-            isDrawing = false;
-            currentPoints = [];
-            currentSegments = [];
-            pendingSegment = null;
-            
-            currentPolylines.forEach(polyline => map.removeLayer(polyline));
-            currentPolylines = [];
-            
-            if (tempLine) {
-                map.removeLayer(tempLine);
-                tempLine = null;
+        document.getElementById('clearNav').addEventListener('click', () => {
+            if (currentSegments.length === 0) {
+                showError('transportError', 'Nothing to clear - no route in progress');
+                return;
             }
             
-            stopConfirmationModal.classList.remove('active');
-            transportSelector.classList.remove('active');
-            
-            updateUI();
-        }
-        
-        function clearAllVectors() {
-            if (confirm('Are you sure you want to clear all routes?')) {
-                vectors.forEach(vector => {
-                    vector.layers.forEach(layer => map.removeLayer(layer));
-                });
-                vectors.clear();
-                document.getElementById('vectorList').innerHTML = '';
-                updateStats();
-            }
-        }
-        
-        function deleteVector(id) {
-            const vector = vectors.get(id);
-            if (vector) {
-                vector.layers.forEach(layer => map.removeLayer(layer));
-                vectors.delete(id);
-                document.getElementById(`vector-${id}`).remove();
-                updateStats();
-            }
-        }
-        
-        async function saveToServer() {
-            const data = {
-                userData: userData,
-                vectors: Array.from(vectors.entries()).map(([id, vector]) => ({
-                    id: id,
-                    segments: vector.segments.map(seg => ({
-                        start: {lat: seg.start.lat, lng: seg.start.lng},
-                        end: {lat: seg.end.lat, lng: seg.end.lng},
-                        transportMode: seg.transportMode,
-                        durationSeconds: seg.durationSeconds,
-                        experienceRating: seg.experienceRating
-                    })),
-                    length: vector.length,
-                    userData: vector.userData
-                }))
-            };
-            
-            try {
-                const response = await fetch('/api/save', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(data)
-                });
-                
-                const result = await response.json();
-                if (result.success) {
-                    alert('Data saved successfully! ID: ' + result.session_id);
-                } else {
-                    alert('Error saving data: ' + result.error);
-                }
-            } catch (error) {
-                alert('Error saving data: ' + error.message);
-            }
-        }
-        
-        drawBtn.addEventListener('click', () => {
-            if (isDrawing) {
-                cancelDrawing();
-            } else {
-                startDrawing();
+            if (confirm('Clear all routes? This cannot be undone.')) {
+                currentPoints = [];
+                currentSegments = [];
+                currentPolylines.forEach(p => map.removeLayer(p));
+                currentPolylines = [];
+                segmentList.innerHTML = '';
+                pathSidebar.classList.remove('active');
+                showSuccess('Route cleared');
             }
         });
         
-        finishBtn.addEventListener('click', finishDrawing);
-        cancelBtn.addEventListener('click', cancelDrawing);
-        clearBtn.addEventListener('click', clearAllVectors);
-        saveBtn.addEventListener('click', saveToServer);
-        exportExcelBtn.addEventListener('click', () => {
-            window.location.href = '/api/export-excel';
-        });
-        
-        map.on('click', function(e) {
-            if (!isDrawing) return;
-            
-            const latlng = e.latlng;
-            
-            if (currentPoints.length >= 1) {
-                // Auto-create passing segment and make it editable if user chooses to stop
-                const segment = {
-                    start: currentPoints[currentPoints.length - 1],
-                    end: latlng,
-                    transportMode: 'walking',
-                    durationSeconds: 0,
-                    experienceRating: 0
-                };
-                currentSegments.push(segment);
-                editableSegmentIndex = currentSegments.length - 1;
-                stopPrompt.classList.add('active');
-            }
-            
-            currentPoints.push(latlng);
-            redrawCurrentSegments();
-            updateUI();
-        });
-        
-        map.on('dblclick', function(e) {
-            if (isDrawing && currentPoints.length >= 2) {
-                e.originalEvent.preventDefault();
-                finishDrawing();
-            }
-        });
-        
-        map.on('mousemove', function(e) {
-            if (!isDrawing || currentPoints.length === 0) return;
-            
-            if (tempLine) {
-                map.removeLayer(tempLine);
-            }
-            
-            const lastPoint = currentPoints[currentPoints.length - 1];
-            tempLine = L.polyline([lastPoint, e.latlng], {
-                color: '#999999',
-                weight: 2,
-                opacity: 0.3,
-                dashArray: '5, 5'
-            }).addTo(map);
-        });
-        
-        window.addEventListener('resize', function() {
+        window.addEventListener('resize', () => {
             map.invalidateSize();
         });
-        
-        updateUI();
     </script>
 </body>
 </html>
@@ -1486,149 +1340,18 @@ def save_csv():
                 grade_level = user_data.get('gradeLevel', '')
                 department = user_data.get('department', '')
                 
-                # Determine segment type based on duration and rating
                 segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
                 
                 writer.writerow([full_name, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
                                transport, f"{distance:.6f}", duration_seconds, duration_minutes, 
                                experience_rating, segment_type, user_type, grade_level, department])
         
-        # Save to database for better persistence
-        db_success = save_to_database(route_id, segments, user_data)
-        
-        # Try to append to Excel file
-        try:
-            timestamp = datetime.now().isoformat()
-            append_route_to_excel(timestamp, route_id, segments, user_data)
-        except Exception as e:
-            print(f"Warning: Failed to update Excel file: {e}")
+        save_to_database(route_id, segments, user_data)
         
         return jsonify({
             'success': True,
-            'message': f'Route saved to CSV{" and database" if db_success else " (database save failed)"}'
+            'message': 'Route saved successfully'
         })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
-@app.route('/api/save', methods=['POST'])
-def save_data():
-    try:
-        data = request.get_json()
-        
-        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        vectors_storage[session_id] = {
-            'timestamp': datetime.now().isoformat(),
-            'data': data
-        }
-        
-        return jsonify({
-            'success': True,
-            'session_id': session_id,
-            'message': 'Data saved successfully'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
-@app.route('/api/load/<session_id>', methods=['GET'])
-def load_data(session_id):
-    try:
-        if session_id in vectors_storage:
-            return jsonify({
-                'success': True,
-                'data': vectors_storage[session_id]['data']
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Session not found'
-            }), 404
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
-@app.route('/api/sessions', methods=['GET'])
-def list_sessions():
-    try:
-        sessions = []
-        for session_id, session_data in vectors_storage.items():
-            sessions.append({
-                'session_id': session_id,
-                'timestamp': session_data['timestamp'],
-                'vector_count': len(session_data['data'].get('vectors', []))
-            })
-        
-        return jsonify({
-            'success': True,
-            'sessions': sessions
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
-@app.route('/api/export/<session_id>', methods=['GET'])
-def export_data(session_id):
-    try:
-        if session_id not in vectors_storage:
-            return jsonify({
-                'success': False,
-                'error': 'Session not found'
-            }), 404
-        
-        data = vectors_storage[session_id]['data']
-        
-        csv_lines = ['Route_ID,Segment_ID,Start_Lat,Start_Lng,End_Lat,End_Lng,Transport_Mode,Distance_KM,Duration_Seconds,Duration_Minutes,Experience_Rating,Segment_Type,User_Type,Grade_Level,Department']
-        
-        for vector in data.get('vectors', []):
-            route_id = vector['id']
-            for idx, segment in enumerate(vector['segments']):
-                start_lat = segment['start']['lat']
-                start_lng = segment['start']['lng']
-                end_lat = segment['end']['lat']
-                end_lng = segment['end']['lng']
-                transport = segment['transportMode']
-                duration_seconds = segment.get('durationSeconds', 0)
-                duration_minutes = round(duration_seconds / 60, 2)
-                experience_rating = segment.get('experienceRating', '')
-                
-                from math import radians, sin, cos, sqrt, atan2
-                R = 6371
-                
-                lat1, lon1 = radians(start_lat), radians(start_lng)
-                lat2, lon2 = radians(end_lat), radians(end_lng)
-                
-                dlat = lat2 - lat1
-                dlon = lon2 - lon1
-                
-                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                c = 2 * atan2(sqrt(a), sqrt(1-a))
-                distance = R * c
-                
-                user_type = vector.get('userData', {}).get('userType', '')
-                grade_level = vector.get('userData', {}).get('gradeLevel', '')
-                department = vector.get('userData', {}).get('department', '')
-                
-                # Determine segment type based on duration and rating
-                segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
-                
-                csv_lines.append(f"{route_id},{idx+1},{start_lat},{start_lng},{end_lat},{end_lng},{transport},{distance:.6f},{duration_seconds},{duration_minutes},{experience_rating},{segment_type},{user_type},{grade_level},{department}")
-        
-        csv_content = '\n'.join(csv_lines)
-        
-        return csv_content, 200, {
-            'Content-Type': 'text/csv',
-            'Content-Disposition': f'attachment; filename={session_id}.csv'
-        }
     except Exception as e:
         return jsonify({
             'success': False,
@@ -1642,27 +1365,22 @@ def export_excel():
         
         df = None
         
-        # First try to get data from database
         try:
             conn = sqlite3.connect(DB_FILE)
             df = pd.read_sql_query('SELECT * FROM routes', conn)
             conn.close()
-            print(f"Loaded data from database: {len(df)} records")
         except Exception as e:
             print(f"Could not load from database: {e}")
         
-        # If no database data, try CSV file
         if df is None or len(df) == 0:
             if os.path.exists(CSV_FILE):
                 df = pd.read_csv(CSV_FILE)
-                print(f"Loaded data from CSV: {len(df)} records")
             else:
-                return jsonify({'success': False, 'error': 'No data found. Please save a route first.'}), 404
+                return jsonify({'success': False, 'error': 'No data found'}), 404
         
         if df is None or len(df) == 0:
-            return jsonify({'success': False, 'error': 'No data found. Please save a route first.'}), 404
+            return jsonify({'success': False, 'error': 'No data found'}), 404
         
-        # Create Excel file in memory
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Vectors')
@@ -1677,23 +1395,9 @@ def export_excel():
         )
         
     except ImportError:
-        return jsonify({'success': False, 'error': 'Excel export requires pandas and openpyxl packages. Please contact administrator.'}), 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-@app.route('/api/clear-data', methods=['POST'])
-def clear_data():
-    try:
-        if os.path.exists(EXCEL_FILE):
-            os.remove(EXCEL_FILE)
-
-        if os.path.exists(CSV_FILE):
-            os.remove(CSV_FILE)
-        initialize_csv()
-
-        return jsonify({'success': True, 'message': 'Excel and CSV cleared'})
+        return jsonify({'success': False, 'error': 'pandas/openpyxl not available'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=2)
+    app.run(debug=True, host='0.0.0.0', port=5001)
