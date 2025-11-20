@@ -33,7 +33,6 @@ def init_database():
             distance_km REAL NOT NULL,
             duration_seconds INTEGER NOT NULL,
             duration_minutes REAL NOT NULL,
-            experience_rating INTEGER NOT NULL,
             segment_type TEXT NOT NULL,
             user_type TEXT NOT NULL,
             grade_level TEXT,
@@ -61,7 +60,6 @@ def save_to_database(route_id, segments, user_data):
             transport = segment['transportMode']
             duration_seconds = segment.get('durationSeconds', 0)
             duration_minutes = round(duration_seconds / 60, 2)
-            experience_rating = segment.get('experienceRating', 0)
             
             from math import radians, sin, cos, sqrt, atan2
             R = 6371
@@ -73,16 +71,16 @@ def save_to_database(route_id, segments, user_data):
             c = 2 * atan2(sqrt(a), sqrt(1-a))
             distance = R * c
             
-            segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
+            segment_type = segment.get('segmentType', 'passing')
             
             cursor.execute('''
                 INSERT INTO routes (timestamp, route_id, segment_id, start_lat, start_lng, 
                                   end_lat, end_lng, transport_mode, distance_km, duration_seconds, 
-                                  duration_minutes, experience_rating, segment_type, user_type, grade_level, 
+                                  duration_minutes, segment_type, user_type, grade_level, 
                                   department, full_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (timestamp, route_id, idx+1, start_lat, start_lng, end_lat, end_lng,
-                  transport, distance, duration_seconds, duration_minutes, experience_rating,
+                  transport, distance, duration_seconds, duration_minutes,
                   segment_type, user_data.get('userType', ''), user_data.get('gradeLevel', ''),
                   user_data.get('department', ''), user_data.get('fullName', '')))
         
@@ -99,7 +97,7 @@ def initialize_csv():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Experience_Rating', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
+            writer.writerow(['Full_Name', 'Route_ID', 'Segment_ID', 'Start_Lat', 'Start_Lng', 'End_Lat', 'End_Lng', 'Transport_Mode', 'Distance_KM', 'Duration_Seconds', 'Duration_Minutes', 'Segment_Type', 'User_Type', 'Grade_Level', 'Department'])
 
 initialize_csv()
 
@@ -224,30 +222,6 @@ HTML_TEMPLATE = '''
             color: #ccc;
         }
         
-        /* Add Stop Button */
-        .add-stop-btn {
-            position: absolute;
-            top: 80px;
-            left: 20px;
-            z-index: 1000;
-            background: #E4351A;
-            color: white;
-            border: none;
-            border-radius: 24px;
-            padding: 12px 24px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            box-shadow: 0 2px 8px rgba(228, 53, 26, 0.3);
-            display: none;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .add-stop-btn.active {
-            display: flex;
-        }
-        
         /* Current Path Sidebar */
         .sidebar {
             position: absolute;
@@ -364,8 +338,63 @@ HTML_TEMPLATE = '''
             color: #666;
         }
         
-        .segment-stars {
-            color: #FFC107;
+        .segment-type-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .segment-type-stopping {
+            background: #E4351A;
+            color: white;
+        }
+        
+        .segment-type-passing {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .passing-points-dropdown {
+            margin-left: 48px;
+            margin-bottom: 8px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #666;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .passing-points-dropdown:hover {
+            background: #e0e0e0;
+        }
+        
+        .passing-points-list {
+            margin-left: 48px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #666;
+            border-left: 3px solid #6c757d;
+        }
+        
+        .passing-point-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+        }
+        
+        .passing-point-marker {
+            width: 16px;
+            height: 16px;
+            background: #6c757d;
+            border-radius: 50%;
+            border: 2px solid white;
         }
         
         /* Modal Overlay */
@@ -518,6 +547,64 @@ HTML_TEMPLATE = '''
             display: block;
         }
         
+        /* Point Type Modal */
+        .point-type-modal {
+            background: white;
+            border-radius: 24px;
+            padding: 32px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .point-type-modal h2 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+        
+        .point-type-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .point-type-option {
+            padding: 24px;
+            border: 2px solid #e0e0e0;
+            border-radius: 16px;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.2s;
+        }
+        
+        .point-type-option:hover {
+            border-color: #E4351A;
+            background: #fff5f3;
+        }
+        
+        .point-type-option.active {
+            border-color: #E4351A;
+            background: #E4351A;
+            color: white;
+        }
+        
+        .point-type-icon {
+            font-size: 40px;
+        }
+        
+        .point-type-text {
+            font-size: 16px;
+            font-weight: 500;
+            text-align: center;
+        }
+        
         /* Transport Selector Modal */
         .transport-modal {
             background: white;
@@ -597,28 +684,6 @@ HTML_TEMPLATE = '''
             border-color: #E4351A;
         }
         
-        .rating-section {
-            margin: 24px 0;
-        }
-        
-        .star-rating {
-            display: flex;
-            gap: 8px;
-            justify-content: center;
-        }
-        
-        .star {
-            font-size: 40px;
-            color: #ddd;
-            cursor: pointer;
-            transition: color 0.2s;
-        }
-        
-        .star:hover,
-        .star.active {
-            color: #FFC107;
-        }
-        
         /* Help Modal */
         .help-modal {
             background: white;
@@ -665,6 +730,10 @@ HTML_TEMPLATE = '''
                 grid-template-columns: repeat(2, 1fr);
             }
             
+            .point-type-options {
+                grid-template-columns: 1fr;
+            }
+            
             .header-nav {
                 gap: 16px;
             }
@@ -708,6 +777,30 @@ HTML_TEMPLATE = '''
         </div>
     </div>
 
+    <!-- Point Type Modal -->
+    <div id="pointTypeModal" class="modal-overlay">
+        <div class="point-type-modal">
+            <h2>What type of point is this?</h2>
+            
+            <div class="point-type-options">
+                <div class="point-type-option active" data-type="stopping">
+                    <div class="point-type-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="point-type-text">Stopping Point</div>
+                </div>
+                <div class="point-type-option" data-type="passing">
+                    <div class="point-type-icon">
+                        <i class="fas fa-arrow-right"></i>
+                    </div>
+                    <div class="point-type-text">Passing Point</div>
+                </div>
+            </div>
+            
+            <button class="primary-btn" id="confirmPointType">Continue</button>
+        </div>
+    </div>
+
     <!-- Transport Selector Modal -->
     <div id="transportModal" class="modal-overlay">
         <div class="transport-modal">
@@ -729,21 +822,10 @@ HTML_TEMPLATE = '''
             </div>
             
             <div class="duration-section">
-                <div class="section-title">Duration</div>
+                <div class="section-title">Duration at this stop</div>
                 <div class="duration-inputs">
                     <input type="number" class="duration-input" id="hours" placeholder="Hours" min="0">
                     <input type="number" class="duration-input" id="minutes" placeholder="Minutes" min="0">
-                </div>
-            </div>
-            
-            <div class="rating-section">
-                <div class="section-title">Rating</div>
-                <div class="star-rating" id="starRating">
-                    <span class="star active" data-value="1">★</span>
-                    <span class="star active" data-value="2">★</span>
-                    <span class="star" data-value="3">★</span>
-                    <span class="star" data-value="4">★</span>
-                    <span class="star" data-value="5">★</span>
                 </div>
             </div>
             
@@ -761,7 +843,8 @@ HTML_TEMPLATE = '''
                 <ol>
                     <li>Click the Start Drawing Button.</li>
                     <li>Click your points on map.</li>
-                    <li>Select your mode of transport for each segment.</li>
+                    <li>For each point, choose if it's a stopping point or passing point.</li>
+                    <li>For stopping points, select transport mode and duration.</li>
                     <li>Click Finish Line (or double-click) to complete.</li>
                     <li>Click Save when done to save to server.</li>
                 </ol>
@@ -792,12 +875,6 @@ HTML_TEMPLATE = '''
             <input type="text" placeholder="Search stopping points">
         </div>
         
-        <!-- Add Stop Button -->
-        <button class="add-stop-btn" id="addStopBtn">
-            <i class="fas fa-plus"></i>
-            Add stop
-        </button>
-        
         <!-- Current Path Sidebar -->
         <div class="sidebar" id="pathSidebar">
             <div class="sidebar-header">
@@ -817,19 +894,13 @@ HTML_TEMPLATE = '''
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script>
-        // Initialize map with image overlay
-        const imageBounds = [[0, 0], [1536, 2048]];
-        const map = L.map('map', {
-            crs: L.CRS.Simple,
-            minZoom: -2,
-            maxZoom: 2,
-            zoomControl: false,
-            attributionControl: false
-        });
+        // Initialize map focused on Ann Arbor
+        const map = L.map('map').setView([42.278, -83.738], 15);
         
-        const imageUrl = '/static/campus-map.jpg';
-        const imageOverlay = L.imageOverlay(imageUrl, imageBounds).addTo(map);
-        map.fitBounds(imageOverlay.getBounds());
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
         
         // State
         let userData = {
@@ -843,10 +914,14 @@ HTML_TEMPLATE = '''
         let currentPolylines = [];
         let vectors = new Map();
         let vectorCounter = 0;
-        let selectedRating = 0;
         let selectedTransport = 'biking';
         let editMode = false;
         let editingSegmentIndex = -1;
+        let currentPointType = 'stopping';
+        
+        // Track point types separately
+        let pointTypes = []; // Array to track type of each point: 'stopping' or 'passing'
+        let passingPoints = []; // Array to track passing point indices and positions
         
         // Utility function to show error messages
         function showError(elementId, message, duration = 4000) {
@@ -877,11 +952,11 @@ HTML_TEMPLATE = '''
         
         // Elements
         const welcomeModal = document.getElementById('welcomeModal');
+        const pointTypeModal = document.getElementById('pointTypeModal');
         const transportModal = document.getElementById('transportModal');
         const helpModal = document.getElementById('helpModal');
         const pathSidebar = document.getElementById('pathSidebar');
         const segmentList = document.getElementById('segmentList');
-        const addStopBtn = document.getElementById('addStopBtn');
         const editSegmentsBtn = document.getElementById('editSegmentsBtn');
         
         // Edit Segments Button
@@ -947,6 +1022,35 @@ HTML_TEMPLATE = '''
             helpModal.classList.add('active');
         });
         
+        // Point Type Modal
+        document.querySelectorAll('.point-type-option').forEach(option => {
+            option.addEventListener('click', function() {
+                document.querySelectorAll('.point-type-option').forEach(o => o.classList.remove('active'));
+                this.classList.add('active');
+                currentPointType = this.dataset.type;
+            });
+        });
+        
+        document.getElementById('confirmPointType').addEventListener('click', () => {
+            pointTypeModal.classList.remove('active');
+            
+            // Record the point type
+            pointTypes[currentPoints.length - 1] = currentPointType;
+            
+            if (currentPointType === 'stopping') {
+                // Show transport modal for stopping points
+                transportModal.classList.add('active');
+            } else {
+                // For passing points, just add to passing points array and update map
+                passingPoints.push({
+                    index: currentPoints.length - 1,
+                    position: currentPoints[currentPoints.length - 1]
+                });
+                updateMap();
+                updateSidebar();
+            }
+        });
+        
         // Transport Modal - Transport Selection
         document.querySelectorAll('.transport-option').forEach(option => {
             option.addEventListener('click', function() {
@@ -956,29 +1060,13 @@ HTML_TEMPLATE = '''
             });
         });
         
-        // Star Rating
-        document.querySelectorAll('.star').forEach(star => {
-            star.addEventListener('click', function() {
-                selectedRating = parseInt(this.dataset.value);
-                document.querySelectorAll('.star').forEach((s, idx) => {
-                    if (idx < selectedRating) {
-                        s.classList.add('active');
-                    } else {
-                        s.classList.remove('active');
-                    }
-                });
-            });
-        });
-        
         // Navigation
         document.getElementById('startDrawingNav').addEventListener('click', () => {
             isDrawing = !isDrawing;
             if (isDrawing) {
-                addStopBtn.classList.add('active');
                 pathSidebar.classList.add('active');
                 document.getElementById('startDrawingNav').textContent = 'Stop Drawing';
             } else {
-                addStopBtn.classList.remove('active');
                 document.getElementById('startDrawingNav').textContent = 'Start Drawing';
             }
         });
@@ -993,6 +1081,8 @@ HTML_TEMPLATE = '''
             if (confirm('Clear all routes?')) {
                 currentPoints = [];
                 currentSegments = [];
+                pointTypes = [];
+                passingPoints = [];
                 currentPolylines.forEach(p => map.removeLayer(p));
                 currentPolylines = [];
                 segmentList.innerHTML = '';
@@ -1003,11 +1093,12 @@ HTML_TEMPLATE = '''
         document.getElementById('cancelNav').addEventListener('click', () => {
             currentPoints = [];
             currentSegments = [];
+            pointTypes = [];
+            passingPoints = [];
             currentPolylines.forEach(p => map.removeLayer(p));
             currentPolylines = [];
             segmentList.innerHTML = '';
             isDrawing = false;
-            addStopBtn.classList.remove('active');
             pathSidebar.classList.remove('active');
             document.getElementById('startDrawingNav').textContent = 'Start Drawing';
         });
@@ -1023,11 +1114,42 @@ HTML_TEMPLATE = '''
             currentPoints.push(latlng);
             
             if (currentPoints.length > 1) {
-                transportModal.classList.add('active');
+                // Show point type modal for new points
+                pointTypeModal.classList.add('active');
+            } else {
+                // First point - default to stopping point
+                pointTypes[0] = 'stopping';
+                updateMap();
+            }
+        });
+        
+        function addSegment(transport, durationSeconds) {
+            // Find the last stopping point to connect to
+            let lastStoppingIndex = -1;
+            for (let i = currentPoints.length - 2; i >= 0; i--) {
+                if (pointTypes[i] === 'stopping') {
+                    lastStoppingIndex = i;
+                    break;
+                }
             }
             
+            if (lastStoppingIndex === -1) {
+                // If no previous stopping point, use the first point
+                lastStoppingIndex = 0;
+            }
+            
+            const segment = {
+                start: currentPoints[lastStoppingIndex],
+                end: currentPoints[currentPoints.length - 1],
+                transportMode: transport,
+                durationSeconds: durationSeconds,
+                segmentType: 'stopping'
+            };
+            
+            currentSegments.push(segment);
             updateMap();
-        });
+            updateSidebar();
+        }
         
         // Confirm Transport
         document.getElementById('confirmTransport').addEventListener('click', () => {
@@ -1035,14 +1157,9 @@ HTML_TEMPLATE = '''
             const minutes = parseInt(document.getElementById('minutes').value) || 0;
             const durationSeconds = (hours * 3600) + (minutes * 60);
             
-            // Validation
-            if (selectedRating === 0) {
-                showError('transportError', 'Please select a star rating (1-5 stars)');
-                return;
-            }
-            
-            if (hours === 0 && minutes === 0) {
-                showError('transportError', 'Please enter a duration (time spent at this location)');
+            // Validation for stopping points
+            if (currentPointType === 'stopping' && hours === 0 && minutes === 0) {
+                showError('transportError', 'Please enter a duration for this stopping point');
                 return;
             }
             
@@ -1050,7 +1167,6 @@ HTML_TEMPLATE = '''
                 // Edit existing segment
                 currentSegments[editingSegmentIndex].transportMode = selectedTransport;
                 currentSegments[editingSegmentIndex].durationSeconds = durationSeconds;
-                currentSegments[editingSegmentIndex].experienceRating = selectedRating;
                 editingSegmentIndex = -1;
                 editMode = false;
                 editSegmentsBtn.style.color = '';
@@ -1058,26 +1174,14 @@ HTML_TEMPLATE = '''
                 showSuccess('Segment updated successfully!');
             } else {
                 // Add new segment
-                const segment = {
-                    start: currentPoints[currentPoints.length - 2],
-                    end: currentPoints[currentPoints.length - 1],
-                    transportMode: selectedTransport,
-                    durationSeconds: durationSeconds,
-                    experienceRating: selectedRating
-                };
-                
-                currentSegments.push(segment);
+                addSegment(selectedTransport, durationSeconds);
             }
             
             // Reset inputs
             document.getElementById('hours').value = '';
             document.getElementById('minutes').value = '';
-            selectedRating = 0;
-            document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
             
             transportModal.classList.remove('active');
-            updateMap();
-            updateSidebar();
         });
         
         function updateMap() {
@@ -1085,27 +1189,41 @@ HTML_TEMPLATE = '''
             currentPolylines.forEach(p => map.removeLayer(p));
             currentPolylines = [];
             
-            // Draw segments
-            currentSegments.forEach((seg, idx) => {
-                const color = getTransportColor(seg.transportMode);
-                const line = L.polyline([seg.start, seg.end], {
-                    color: color,
+            // Draw continuous path through ALL points
+            if (currentPoints.length > 1) {
+                const pathColor = getTransportColor(selectedTransport);
+                const continuousPath = L.polyline(currentPoints, {
+                    color: pathColor,
                     weight: 4,
                     opacity: 0.8
                 }).addTo(map);
-                currentPolylines.push(line);
-            });
+                currentPolylines.push(continuousPath);
+            }
             
-            // Draw markers
+            // Draw markers - only show stopping points with numbers
+            let stoppingPointCount = 0;
             currentPoints.forEach((point, idx) => {
-                const marker = L.marker(point, {
-                    icon: L.divIcon({
-                        className: 'custom-marker',
-                        html: `<div style="width: 32px; height: 32px; background: #E4351A; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">${idx + 1}</div>`,
-                        iconSize: [32, 32]
-                    })
-                }).addTo(map);
-                currentPolylines.push(marker);
+                if (pointTypes[idx] === 'stopping') {
+                    stoppingPointCount++;
+                    const marker = L.marker(point, {
+                        icon: L.divIcon({
+                            className: 'custom-marker',
+                            html: `<div style="width: 32px; height: 32px; background: #E4351A; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">${stoppingPointCount}</div>`,
+                            iconSize: [32, 32]
+                        })
+                    }).addTo(map);
+                    currentPolylines.push(marker);
+                } else {
+                    // Passing points - smaller gray markers without numbers
+                    const marker = L.marker(point, {
+                        icon: L.divIcon({
+                            className: 'passing-marker',
+                            html: `<div style="width: 16px; height: 16px; background: #6c757d; border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.3);"></div>`,
+                            iconSize: [16, 16]
+                        })
+                    }).addTo(map);
+                    currentPolylines.push(marker);
+                }
             });
         }
         
@@ -1133,8 +1251,6 @@ HTML_TEMPLATE = '''
                 const minutes = Math.floor((seg.durationSeconds % 3600) / 60);
                 const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
                 
-                const stars = '★'.repeat(seg.experienceRating);
-                
                 const segmentEl = document.createElement('div');
                 segmentEl.className = 'segment-item';
                 if (editingSegmentIndex === idx) {
@@ -1149,17 +1265,52 @@ HTML_TEMPLATE = '''
                         </div>
                         <div class="segment-meta">
                             <span>${timeStr}</span>
-                            <span class="segment-stars">${stars}</span>
+                            <span class="segment-type-badge segment-type-stopping">Stopping Point</span>
                         </div>
                     </div>
                 `;
                 
+                // Add passing points dropdown if there are any between segments
+                const passingPointsInSegment = passingPoints.filter(pp => 
+                    pp.index > getStoppingPointIndex(idx) && pp.index < getStoppingPointIndex(idx + 1)
+                );
+                
+                if (passingPointsInSegment.length > 0) {
+                    const dropdown = document.createElement('div');
+                    dropdown.className = 'passing-points-dropdown';
+                    dropdown.innerHTML = `<i class="fas fa-chevron-down"></i> ${passingPointsInSegment.length} passing point(s)`;
+                    dropdown.addEventListener('click', function() {
+                        const list = this.nextElementSibling;
+                        list.style.display = list.style.display === 'none' ? 'block' : 'none';
+                        this.innerHTML = list.style.display === 'none' ? 
+                            `<i class="fas fa-chevron-down"></i> ${passingPointsInSegment.length} passing point(s)` :
+                            `<i class="fas fa-chevron-up"></i> ${passingPointsInSegment.length} passing point(s)`;
+                    });
+                    
+                    const passingList = document.createElement('div');
+                    passingList.className = 'passing-points-list';
+                    passingList.style.display = 'none';
+                    
+                    passingPointsInSegment.forEach((pp, ppIndex) => {
+                        const passingItem = document.createElement('div');
+                        passingItem.className = 'passing-point-item';
+                        passingItem.innerHTML = `
+                            <div class="passing-point-marker"></div>
+                            <span>Passing point ${ppIndex + 1}</span>
+                        `;
+                        passingList.appendChild(passingItem);
+                    });
+                    
+                    segmentEl.appendChild(dropdown);
+                    segmentEl.appendChild(passingList);
+                }
+                
                 // Add click handler for editing
-                segmentEl.addEventListener('click', () => {
-                    if (editMode) {
+                segmentEl.addEventListener('click', (e) => {
+                    if (editMode && !e.target.closest('.passing-points-dropdown') && !e.target.closest('.passing-points-list')) {
                         editingSegmentIndex = idx;
                         
-                        // Pre-fill the modal with current values
+                        // Pre-fill the transport modal with current values
                         selectedTransport = seg.transportMode;
                         document.querySelectorAll('.transport-option').forEach(opt => {
                             if (opt.dataset.mode === selectedTransport) {
@@ -1174,15 +1325,6 @@ HTML_TEMPLATE = '''
                         document.getElementById('hours').value = hours;
                         document.getElementById('minutes').value = minutes;
                         
-                        selectedRating = seg.experienceRating;
-                        document.querySelectorAll('.star').forEach((s, i) => {
-                            if (i < selectedRating) {
-                                s.classList.add('active');
-                            } else {
-                                s.classList.remove('active');
-                            }
-                        });
-                        
                         transportModal.classList.add('active');
                         updateSidebar(); // Refresh to show editing state
                     }
@@ -1194,6 +1336,20 @@ HTML_TEMPLATE = '''
             // Update date
             const today = new Date();
             document.getElementById('pathDate').textContent = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`;
+        }
+        
+        function getStoppingPointIndex(segmentIndex) {
+            // Get the index of the stopping point for a given segment
+            let stoppingCount = -1;
+            for (let i = 0; i < pointTypes.length; i++) {
+                if (pointTypes[i] === 'stopping') {
+                    stoppingCount++;
+                    if (stoppingCount === segmentIndex) {
+                        return i;
+                    }
+                }
+            }
+            return 0;
         }
         
         function getTransportColor(mode) {
@@ -1221,11 +1377,12 @@ HTML_TEMPLATE = '''
             // Reset
             currentPoints = [];
             currentSegments = [];
+            pointTypes = [];
+            passingPoints = [];
             currentPolylines.forEach(p => map.removeLayer(p));
             currentPolylines = [];
             segmentList.innerHTML = '';
             isDrawing = false;
-            addStopBtn.classList.remove('active');
             document.getElementById('startDrawingNav').textContent = 'Start Drawing';
             
             showSuccess('Route saved successfully! 🎉');
@@ -1245,7 +1402,7 @@ HTML_TEMPLATE = '''
                             end: {lat: seg.end[0], lng: seg.end[1]},
                             transportMode: seg.transportMode,
                             durationSeconds: seg.durationSeconds,
-                            experienceRating: seg.experienceRating
+                            segmentType: seg.segmentType
                         })),
                         userData: userData
                     })
@@ -1280,6 +1437,8 @@ HTML_TEMPLATE = '''
             if (confirm('Clear all routes? This cannot be undone.')) {
                 currentPoints = [];
                 currentSegments = [];
+                pointTypes = [];
+                passingPoints = [];
                 currentPolylines.forEach(p => map.removeLayer(p));
                 currentPolylines = [];
                 segmentList.innerHTML = '';
@@ -1321,7 +1480,7 @@ def save_csv():
                 transport = segment['transportMode']
                 duration_seconds = segment.get('durationSeconds', 0)
                 duration_minutes = round(duration_seconds / 60, 2)
-                experience_rating = segment.get('experienceRating', '')
+                segment_type = segment.get('segmentType', 'passing')
                 
                 from math import radians, sin, cos, sqrt, atan2
                 R = 6371
@@ -1340,11 +1499,9 @@ def save_csv():
                 grade_level = user_data.get('gradeLevel', '')
                 department = user_data.get('department', '')
                 
-                segment_type = 'stopping' if duration_seconds > 0 or experience_rating > 0 else 'passing'
-                
                 writer.writerow([full_name, route_id, idx+1, start_lat, start_lng, end_lat, end_lng, 
                                transport, f"{distance:.6f}", duration_seconds, duration_minutes, 
-                               experience_rating, segment_type, user_type, grade_level, department])
+                               segment_type, user_type, grade_level, department])
         
         save_to_database(route_id, segments, user_data)
         
