@@ -3,4 +3,4 @@ pandas==2.2.3
 numpy==2.1.0
 Werkzeug==3.0.1
 matplotlib==3.8.4
-
+gunicorn==21.2.0
