@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Campus Walk Mapper{% endblock %}
+
+{% block head_css %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+{% endblock %}
+
+{% block body %}
+  {# NOTE: For now we keep the existing UI markup via inline copy to preserve behavior.
+     Next iteration can further componentize this template. #}
+  <div id="appRoot"></div>
+{% endblock %}
+
+{% block body_js %}
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script>
+    // Temporary bootstrap: we inject the existing HTML_TEMPLATE content at runtime
+    // to avoid breaking the UI while we finish extraction into static assets.
+    // The full markup will be moved into this template next.
+    (function () {
+      document.getElementById("appRoot").innerHTML = {{ html|tojson }};
+    })();
+  </script>
+{% endblock %}
+
